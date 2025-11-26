@@ -82,8 +82,17 @@ Docker環境があれば、コマンド一発で起動できます。
 2. Docker Composeで起動します。
 
    ```bash
-   docker compose up -d
-   ```
+### C. GitHub Actionsでの自動実行 (推奨)
+
+サーバーを用意せず、GitHub上で毎日自動実行させることができます。
+
+1. GitHubリポジトリの **Settings > Secrets and variables > Actions** を開きます。
+2. 以下の「Repository secrets」を追加します。
+   - `DISCORD_TOKEN`: ボットのトークン
+   - `DISCORD_CHANNEL_ID`: 投稿先のチャンネルID
+   - `GOOGLE_API_KEY`: GeminiのAPIキー
+3. これで毎日 21:00 (JST) に自動的にレポートが投稿されます。
+   （`Actions` タブから手動実行も可能です）
 
 ---
 
