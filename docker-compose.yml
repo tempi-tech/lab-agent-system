@@ -1,0 +1,11 @@
+services:
+  bot:
+    build: .
+    container_name: labo-agent
+    restart: unless-stopped
+    env_file:
+      - .env
+    volumes:
+      # Mount the source code for easier development (optional)
+      - ./src:/app/src
+      - ./main.py:/app/main.py
