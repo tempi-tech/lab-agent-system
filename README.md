@@ -31,6 +31,9 @@ AGIラボ / ChatGPT研究所 のコミュニティ運営で実際に使ってい
 - **実装場所**  
   `src/agents/daily_reporter/`
 
+<img width="989" height="497" alt="image" src="https://github.com/user-attachments/assets/23ee8dd0-92d8-4523-8442-b8774c406067" />
+
+
 ---
 
 ## 必要要件
