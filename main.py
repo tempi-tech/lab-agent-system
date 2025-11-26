@@ -11,6 +11,7 @@ from dotenv import load_dotenv
 from src.core.bot import CommunityBot
 from src.core import config
 from src.agents.daily_reporter.logic import DailyReporterAgent
+from src.agents.llm_council.logic import LlmCouncilAgent
 
 # Load environment variables
 load_dotenv()
@@ -27,8 +28,11 @@ def main():
     client = CommunityBot(intents=intents)
 
     # Register Agents
-    daily_reporter = DailyReporterAgent()
-    client.register_agent(daily_reporter)
+    # daily_reporter = DailyReporterAgent()
+    # client.register_agent(daily_reporter)
+
+    llm_council = LlmCouncilAgent()
+    client.register_agent(llm_council)
 
     # Run Bot
     token = config.DISCORD_TOKEN
