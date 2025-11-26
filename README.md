@@ -90,6 +90,7 @@ Docker環境があれば、コマンド一発で起動できます。
 2. 以下の「Repository secrets」を追加します。
    - `DISCORD_TOKEN`: ボットのトークン
    - `DISCORD_CHANNEL_ID`: 投稿先のチャンネルID
+   - `SOURCE_CHANNEL_IDS`: 監視対象のチャンネルID（カンマ区切りで複数指定可）
    - `GOOGLE_API_KEY`: GeminiのAPIキー
 3. これで毎日 21:00 (JST) に自動的にレポートが投稿されます。
    （`Actions` タブから手動実行も可能です）

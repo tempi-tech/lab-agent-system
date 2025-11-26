@@ -8,13 +8,13 @@ SESSION_ID = "summary_session"
 GEMINI_MODEL = "gemini-2.0-flash-exp" # Updated to a widely available model or keep user's preference
 
 # Discord Channel IDs
-# random, tools (forum), topics (forum)
-# TODO: Move these to environment variables or a config file for better flexibility
-SOURCE_CHANNELS = [
-    842348486234341407,  # random
-    1436182005762097243, # tools
-    1441407606395637993, # topics
-]
+# Load from environment variable (comma-separated)
+# Example: SOURCE_CHANNEL_IDS=123456789,987654321
+_source_channels_str = os.environ.get("SOURCE_CHANNEL_IDS", "")
+SOURCE_CHANNELS = [int(id.strip()) for id in _source_channels_str.split(",") if id.strip().isdigit()]
+
+if not SOURCE_CHANNELS:
+    print("Warning: SOURCE_CHANNEL_IDS not set or empty. No channels will be monitored.")
 
 # State Keys
 STATE_TOPICS = "topics_summary"
