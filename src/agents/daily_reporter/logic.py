@@ -124,14 +124,17 @@ class DailyReporterAgent(BaseAgent):
             formatted_messages.append(f"User: {author_display} (ID: {msg.author.id})\nLocation: {location}\nURL: {msg.jump_url}\nMessage: {msg.content}")
 
         # 4. New Member Detection
-        guild = self.client.get_channel(config.SOURCE_CHANNELS[0]).guild
         new_members_list = []
-        if guild:
-            print(f"Checking for new members in guild: {guild.name}")
-            for member in guild.members:
-                if member.joined_at and member.joined_at > threshold:
-                    if not member.bot:
-                        new_members_list.append(f"<@{member.id}>")
+        if config.SOURCE_CHANNELS:
+            guild = self.client.get_channel(config.SOURCE_CHANNELS[0]).guild
+            if guild:
+                print(f"Checking for new members in guild: {guild.name}")
+                for member in guild.members:
+                    if member.joined_at and member.joined_at > threshold:
+                        if not member.bot:
+                            new_members_list.append(f"<@{member.id}>")
+        else:
+            print("Warning: No source channels configured. Skipping new member detection.")
         
         new_members_str = " ".join(new_members_list) if new_members_list else "なし"
         print(f"New members found: {new_members_str}")
