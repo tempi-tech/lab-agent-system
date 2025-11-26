@@ -1,4 +1,4 @@
-# Labo Agent System – Discord Community Agents
+# Lab Agent System – Discord Community Agents
 
 このリポジトリは、コミュニティ（特にDiscord）向けの **AIエージェント基盤** です。
 
@@ -49,7 +49,7 @@ AGIラボ / ChatGPT研究所 のコミュニティ運営で実際に使ってい
 
    ```bash
    git clone <repository-url>
-   cd labo-agent-system
+   cd lab-agent-system
    ```
 
 2. 依存ライブラリをインストールします。

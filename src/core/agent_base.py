@@ -3,7 +3,7 @@ import discord
 
 class BaseAgent(ABC):
     """
-    Base class for all Discord agents in the Labo Agent System.
+    Base class for all Discord agents in the Lab Agent System.
     All agents must inherit from this class and implement the required methods.
     """
 

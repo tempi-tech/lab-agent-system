@@ -1,5 +1,5 @@
 [project]
-name = "labo-agent-system"
+name = "lab-agent-system"
 version = "0.1.0"
 description = "AI Agent Platform for Discord Communities"
 readme = "README.md"
