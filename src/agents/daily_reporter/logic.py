@@ -157,9 +157,18 @@ class DailyReporterAgent(BaseAgent):
             name="TopicSummarizer",
             model=config.GEMINI_MODEL,
             instruction="""あなたは「超要約係」です。
-            チャット履歴から、最も重要なトピックを**最大3つ**抽出してください。
-            各トピックは**1行**で簡潔にまとめてください。
-            だらだら書くのは禁止です。
+            チャット履歴から、重要なトピックを抽出してください。
+
+            **ルール:**
+            - トピック数は会話の内容に応じて柔軟に（少ない日は1-2個、活発な日は5-10個）
+            - 各トピックは**1行**で簡潔に
+            - だらだら書くのは禁止
+
+            **出力形式（必ず守ること）:**
+            - <トピック内容> [参考](<該当メッセージのURL>)
+
+            例:
+            - AIモデルの比較議論が白熱 [参考](https://discord.com/channels/xxx/yyy/zzz)
             """,
             output_key=config.STATE_TOPICS
         )
@@ -227,11 +236,11 @@ class DailyReporterAgent(BaseAgent):
             
             ## フォーマット例
             📅 **今日のラボ日誌**
-            
+
             📝 **トピック**
-            - [トピック1]
-            - [トピック2]
-            
+            - [トピック1] [参考](URL)
+            - [トピック2] [参考](URL)
+
             ✨ **今日のハイライト**
             [発言内容の要約] (by <@123456789>)
             🔗 [元発言](https://discord.com/channels/...)
@@ -241,6 +250,10 @@ class DailyReporterAgent(BaseAgent):
             
             🆕 **新しいセンパイ**
             <@987654321> ようこそッス！
+            
+            ## 禁止事項 (Negative Constraints)
+            - 「はい、承知しました」「レポートを作成します」などの前置きは**一切禁止**です。
+            - 出力は必ず `📅 **今日のラボ日誌**` から始めてください。
             """,
             output_key=config.STATE_FINAL_REPORT
         )
