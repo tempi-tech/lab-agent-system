@@ -5,6 +5,11 @@ on:
     # 21:00 JST = 12:00 UTC
     - cron: '0 12 * * *'
   workflow_dispatch:
+    inputs:
+      channel_override:
+        description: 'テスト用チャンネルID（空欄で本番）'
+        required: false
+        default: ''
 
 jobs:
   run-reporter:
@@ -26,7 +31,7 @@ jobs:
         env:
           GOOGLE_API_KEY: ${{ secrets.GOOGLE_API_KEY }}
           DISCORD_TOKEN: ${{ secrets.DISCORD_TOKEN }}
-          DISCORD_CHANNEL_ID: ${{ secrets.DISCORD_CHANNEL_ID }}
+          DISCORD_CHANNEL_ID: ${{ inputs.channel_override || secrets.DISCORD_CHANNEL_ID }}
           SOURCE_CHANNEL_IDS: ${{ secrets.SOURCE_CHANNEL_IDS }}
         run: |
           python main.py --once
