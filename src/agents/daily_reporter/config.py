@@ -5,7 +5,7 @@ from src.core import config as core_config
 APP_NAME = "discord_daily_summary"
 USER_ID = "summary_user"
 SESSION_ID = "summary_session"
-GEMINI_MODEL = "gemini-2.0-flash-exp" # Updated to a widely available model or keep user's preference
+GEMINI_MODEL = "gemini-3-flash-preview"
 
 # Discord Channel IDs
 # Load from environment variable (comma-separated)
