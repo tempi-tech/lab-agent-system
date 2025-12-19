@@ -28,11 +28,12 @@ def main():
     daily_reporter = DailyReporterAgent()
     client.register_agent(daily_reporter)
 
-    quiz_master = get_quiz_master()
-    client.register_agent(quiz_master)
+    if not run_once:
+        quiz_master = get_quiz_master()
+        client.register_agent(quiz_master)
 
-    client.register_agent(InviteRoleAssignerAgent())
-    client.register_agent(get_operator())
+        client.register_agent(InviteRoleAssignerAgent())
+        client.register_agent(get_operator())
 
     # Run Bot
     token = config.DISCORD_TOKEN
