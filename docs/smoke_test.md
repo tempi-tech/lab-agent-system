@@ -46,3 +46,6 @@ SOURCE_CHANNEL_IDS=1441302743229665422 \
 python main.py --once
 ```
 - CLI 出力: ログイン成功、#test のメッセージ取得、分析開始、完了ログを確認
+
+## 関連ログ
+- `docs/implementation_log_2025-12-19.md`

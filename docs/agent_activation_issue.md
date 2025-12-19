@@ -73,3 +73,5 @@
 - まず `ENABLED_AGENTS` 方式で POC を入れ、実運用で摩擦がないか確認。
 - 問題があれば `DAILY_REPORTER_AUTORUN` のような補助フラグを追加する。
 
+## 関連ログ
+- `docs/implementation_log_2025-12-19.md`
