@@ -5,6 +5,7 @@ services:
     restart: unless-stopped
     env_file:
       - .env
+    command: ["python", "-u", "main.py"]
     volumes:
       # Mount the source code for easier development (optional)
       - ./src:/app/src
