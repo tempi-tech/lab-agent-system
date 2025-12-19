@@ -13,26 +13,37 @@ from src.core.agent_base import BaseAgent
 class DailyReporterAgent(BaseAgent):
     def __init__(self):
         self.client = None # Will be set in on_ready
+        self.action_namespace = "daily_reporter"
 
     @property
     def name(self) -> str:
         return "DailyReporterAgent"
 
+    def get_actions(self):
+        return {"run": self.run}
 
     async def on_ready(self, client: discord.Client):
         self.client = client
         print("DailyReporterAgent is ready.")
-        
-        # Target is the test channel (from env)
-        target_channel_id = core_config.TARGET_CHANNEL_ID
-        target_channel = self.client.get_channel(int(target_channel_id)) if target_channel_id else None
-        
-        if target_channel:
-            # In a real scenario, you might want to schedule this instead of running immediately on startup
-            # For now, we keep the original behavior of running on startup
-            await self.generate_summary(target_channel)
-        else:
-            print(f"DailyReporterAgent Error: Could not find target channel {target_channel_id}")
+
+    async def run(self, message: discord.Message, args: list[str]) -> None:
+        if not self.client:
+            await message.channel.send("DailyReporter is not ready yet.")
+            return
+
+        target_channel = None
+        if args and args[0].lower() == "here":
+            target_channel = message.channel
+        elif core_config.TARGET_CHANNEL_ID:
+            target_channel = self.client.get_channel(int(core_config.TARGET_CHANNEL_ID))
+
+        if not target_channel:
+            await message.channel.send(
+                "DailyReporter target channel not found. Set `DISCORD_CHANNEL_ID` or use `!agent daily_reporter run here`."
+            )
+            return
+
+        await self.generate_summary(target_channel)
 
     async def get_or_create_webhook(self, channel):
         webhooks = await channel.webhooks()

@@ -2,6 +2,8 @@ import discord
 import logging
 from typing import TYPE_CHECKING
 
+from src.core.action_registry import ActionRegistry
+
 if TYPE_CHECKING:
     from src.core.agent_base import BaseAgent
 
@@ -9,11 +11,17 @@ class CommunityBot(discord.Client):
     def __init__(self, intents: discord.Intents):
         super().__init__(intents=intents)
         self.agents = []
+        self.actions = ActionRegistry()
 
     def register_agent(self, agent_instance: 'BaseAgent'):
         """Registers an agent instance to the bot."""
         self.agents.append(agent_instance)
         print(f"Registered agent: {agent_instance.name}")
+        if hasattr(agent_instance, "get_actions"):
+            actions = agent_instance.get_actions()
+            if actions:
+                namespace = getattr(agent_instance, "action_namespace", agent_instance.name)
+                self.actions.register(namespace, actions)
 
     async def on_ready(self):
         print(f'Logged in as {self.user}')
