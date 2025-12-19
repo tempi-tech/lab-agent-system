@@ -36,3 +36,11 @@ class CommunityBot(discord.Client):
                     await agent.on_message(message)
                 except Exception as e:
                     print(f"Error in {agent.__class__.__name__}.on_message: {e}")
+
+    async def on_member_join(self, member):
+        for agent in self.agents:
+            if hasattr(agent, 'on_member_join'):
+                try:
+                    await agent.on_member_join(member)
+                except Exception as e:
+                    print(f"Error in {agent.__class__.__name__}.on_member_join: {e}")
