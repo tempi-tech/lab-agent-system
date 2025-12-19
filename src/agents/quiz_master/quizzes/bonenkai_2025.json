@@ -1,0 +1,89 @@
+{
+  "quiz_id": "bonenkai_2025",
+  "title": "忘年会AIクイズ 2025（4問）",
+  "description": "知識2問 + クリエイティブ2問。Discordスレッド回答。AI採点。",
+  "show_correct_answer_after_close": true,
+  "allow_answer_edit": true,
+  "questions": [
+    {
+      "id": "k1",
+      "type": "knowledge",
+      "title": "AI年表：2025年の重大ニュース",
+      "prompt": "2025年のAIニュースとして最も適切なのはどれ？（※運営で差し替え可）",
+      "points": 25,
+      "time_limit_sec": 120,
+      "options": [
+        {
+          "key": "A",
+          "text": "（例）LLMが初めて料理を作った",
+          "is_correct": false
+        },
+        {
+          "key": "B",
+          "text": "（例）推論モデルの長文コンテキストが一般化した",
+          "is_correct": true
+        },
+        {
+          "key": "C",
+          "text": "（例）スマホが全て折りたたみになった",
+          "is_correct": false
+        },
+        {
+          "key": "D",
+          "text": "（例）AIが国連に加盟した",
+          "is_correct": false
+        }
+      ]
+    },
+    {
+      "id": "k2",
+      "type": "knowledge",
+      "title": "『サムアルトマンの本』からの1問（差し替え推奨）",
+      "prompt": "（ここに本からの“内容理解”クイズを入れてください。本文の長い引用は避け、要点の理解を問う形がおすすめ）\n\n回答はA/B/C/Dで。",
+      "points": 25,
+      "time_limit_sec": 120,
+      "options": [
+        {
+          "key": "A",
+          "text": "選択肢A（例）",
+          "is_correct": false
+        },
+        {
+          "key": "B",
+          "text": "選択肢B（例）",
+          "is_correct": false
+        },
+        {
+          "key": "C",
+          "text": "選択肢C（例）",
+          "is_correct": true
+        },
+        {
+          "key": "D",
+          "text": "選択肢D（例）",
+          "is_correct": false
+        }
+      ]
+    },
+    {
+      "id": "c1",
+      "type": "creative",
+      "title": "プロンプト・バトル①：年末を乗り切る“最強の一言”",
+      "prompt": "あなたがAIに投げる“1発でいい感じの年末挨拶文が出る”最強プロンプトを1つ作ってください。条件や口調指定もOK。",
+      "points": 25,
+      "time_limit_sec": 240,
+      "max_chars": 700,
+      "rubric": "- 0〜25点（整数）。\n- 独創性（0-8）: よくあるテンプレからの飛躍があるか。\n- 実用性（0-8）: そのまま使える/再利用しやすいか。\n- 指示の明快さ（0-5）: 読んで実行可能か。\n- お題との一致（0-4）: 年末挨拶の生成に直結しているか。\n"
+    },
+    {
+      "id": "c2",
+      "type": "creative",
+      "title": "プロンプト・バトル②：2026年のAI予想を“刺さる一文”に",
+      "prompt": "運営のオープニングトーク（2026年AI予想）に絡めて、聴衆が思わずメモしたくなる“予想の一文”をAIで作るためのプロンプトを書いてください。\n（例：『2026年、AIは○○になる。なぜなら…』）",
+      "points": 25,
+      "time_limit_sec": 240,
+      "max_chars": 700,
+      "rubric": "- 0〜25点（整数）。\n- 洞察/面白さ（0-10）: その場が盛り上がる要素があるか。\n- 具体性（0-7）: 予想が具体で、出力に再現性があるか。\n- プロンプト設計（0-5）: 役割/制約/評価観点などが上手いか。\n- お題との一致（0-3）: 2026年AI予想の“一文”に直結しているか。\n"
+    }
+  ]
+}
