@@ -7,19 +7,22 @@ load_dotenv()
 
 # Configuration
 DISCORD_TOKEN = os.environ.get("DISCORD_TOKEN")
-TARGET_CHANNEL_ID = 842348486234341407  # random
-IMAGE_PATH = "/Users/kai/Develop/autogen/lab-agent-system/scripts/geminiupdate.png"
+TARGET_CHANNEL_ID = int(os.environ.get("ANNOUNCE_CHANNEL_ID", "0"))
+IMAGE_PATH = ""
 
 ANNOUNCEMENT_TEXT = """@everyone
-**【お知らせ】ラボちゃんのアップデート**
+**【お知らせ】コンテストフォーラム、始動！**
 
-日々の活動を要約するAIエージェント「ラボちゃん」に、以下の改善を行いました。
+新しく「コンテスト」フォーラムを作成しました。
+毎日お題を投稿し、LLMが採点してくれます笑
 
-**🆕 アップデート内容:**
+本日のお題はこちら！
+https://discord.com/channels/GUILD_ID/CHANNEL_ID
 
-**🧠 AIモデルのアップグレード**: 本日発表された最新モデル `gemini-3-flash-preview` に更新しました。より高精度な要約・分析が期待できます。
+コンテストフォーラム（#コンテスト）：
+https://discord.com/channels/GUILD_ID/CHANNEL_ID
 
-引き続き、コミュニティの知見共有にお役立てください。
+⏰ 回答締切：本日 22:00
 """
 
 intents = discord.Intents.default()
@@ -28,6 +31,10 @@ client = discord.Client(intents=intents)
 @client.event
 async def on_ready():
     print(f'Logged in as {client.user}')
+    if TARGET_CHANNEL_ID == 0:
+        print("Error: ANNOUNCE_CHANNEL_ID not set.")
+        await client.close()
+        return
     channel = client.get_channel(TARGET_CHANNEL_ID)
 
     if channel:

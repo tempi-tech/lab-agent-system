@@ -1,6 +1,6 @@
 """Quiz Master Agent
 
-This agent runs an AI-assisted quiz inside a Discord channel/thread.
+This agent runs an AI-assisted quiz inside a Discord channel/forum.
 
 Drop-in agent for the tempi-tech/lab-agent-system repository.
 """

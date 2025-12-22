@@ -25,8 +25,11 @@ def main():
     client = CommunityBot(intents=intents)
 
     # Register Agents
-    daily_reporter = DailyReporterAgent()
-    client.register_agent(daily_reporter)
+    enable_daily = os.getenv("ENABLE_DAILY_REPORTER", "1").strip().lower() not in {"0", "false", "no"}
+    daily_reporter = None
+    if run_once or enable_daily:
+        daily_reporter = DailyReporterAgent()
+        client.register_agent(daily_reporter)
 
     if not run_once:
         quiz_master = get_quiz_master()
@@ -50,7 +53,7 @@ def main():
             target_channel_id = config.TARGET_CHANNEL_ID
             target_channel = client.get_channel(int(target_channel_id)) if target_channel_id else None
 
-            if target_channel:
+            if target_channel and daily_reporter:
                 daily_reporter.client = client
                 await daily_reporter.generate_summary(target_channel)
             else:

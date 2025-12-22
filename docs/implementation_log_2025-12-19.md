@@ -34,7 +34,7 @@ GitHub Actions の `--once` 実行は **DailyReporter のみ**を起動するよ
 ### 3) スモークテストの追加
 - `scripts/smoke_test.py` を追加。
 - `docs/smoke_test.md` に手順と期待結果を記載。
-  - #test（ID: `1441302743229665422`）に固定して検証可能。
+  - #test（ID: `CHANNEL_ID`）に固定して検証可能。
 
 ## 挙動の変化
 - **通常起動（`python main.py`）**
@@ -75,3 +75,9 @@ GitHub Actions の `--once` 実行は **DailyReporter のみ**を起動するよ
 ## 次の確認事項（TODO）
 - GitHub Actions の手動実行で #test へ日報が出ることを確認。
 - 必要なら OperatorAgent に最小の権限チェックを追加。
+
+## トラブルシュート記録
+- `docs/forum_quiz_troubleshooting.md`
+- `docs/quiz_forum_implementation_log_2025-12-19.md`
+- `docs/quiz_forum_inspect.md`
+- `docs/quiz_forum_overview.md`

@@ -1,7 +1,7 @@
 # InviteRoleAssignerAgent 実装ログ
 
 **作成日**: 2024-12-18
-**作成者**: Claude Code + kai
+**作成者**: Claude Code + contributor
 
 ---
 
@@ -138,16 +138,16 @@ async def on_member_join(self, member):
 
 ```bash
 # 対象Guild
-INVROLE_GUILD_ID=842347959102603274
+INVROLE_GUILD_ID=GUILD_ID
 
 # 付与するロール
-INVROLE_GENERAL_ROLE_ID=1432555793105813595     # agi-lab
-INVROLE_EXPERT_ROLE_ID=1451042072697241651      # agi-lab*
-INVROLE_REVIEW_ROLE_ID=1451042236790997053      # 要確認
+INVROLE_GENERAL_ROLE_ID=ROLE_ID     # agi-lab
+INVROLE_EXPERT_ROLE_ID=ROLE_ID      # agi-lab*
+INVROLE_REVIEW_ROLE_ID=ROLE_ID      # 要確認
 
 # 通知先
-INVROLE_ADMIN_ROLE_ID=1436182674044620942       # chatgpt-lab-admin
-INVROLE_LOG_CHANNEL_ID=1441302743229665422      # #test
+INVROLE_ADMIN_ROLE_ID=ROLE_ID       # chatgpt-lab-admin
+INVROLE_LOG_CHANNEL_ID=CHANNEL_ID      # #test
 
 # 専門家招待コード（カンマ区切り）
 INVROLE_EXPERT_INVITE_CODES=code1,code2,...
@@ -167,7 +167,7 @@ INVROLE_DEBUG=1
 
 ```
 ✅ InviteRoleAssignerAgent ready. expert_codes=1
-👤 Join: @kaidebug (1451049110395293958)
+👤 Join: @username (USER_ID)
 • invite: J3ceV7tW5N
 • roles: agi-lab, agi-lab*
 • debug: changes=J3ceV7tW5N:0->1
@@ -269,19 +269,19 @@ INVROLE_DEBUG=1
 
 | 招待URL | 付与ロール | #member-log への出力 |
 |---------|-----------|---------------------|
-| 招待枠 (`CNdj4dr74d`) | `agi-lab` | 「招待枠」+ ユーザーID |
+| 招待枠 (`INVITE_CODE`) | `agi-lab` | 「招待枠」+ ユーザーID |
 | 一般枠 (`PV7TS83SUN`) | `agi-lab` | 「一般枠」+ ユーザーID |
 | 検出失敗 | `agi-lab` + `要確認` | 「検出失敗」+ ユーザーID |
 
 ### 新しい環境変数
 
 ```bash
-INVROLE_GUILD_ID=842347959102603274
-INVROLE_GENERAL_ROLE_ID=1432555793105813595    # agi-lab
-INVROLE_REVIEW_ROLE_ID=1451042236790997053     # 要確認
-INVROLE_ADMIN_ROLE_ID=1436182674044620942      # chatgpt-lab-admin
-INVROLE_LOG_CHANNEL_ID=842347959102603277      # #member-log
-INVROLE_INVITED_CODES=CNdj4dr74d               # 招待枠のコード
+INVROLE_GUILD_ID=GUILD_ID
+INVROLE_GENERAL_ROLE_ID=ROLE_ID    # agi-lab
+INVROLE_REVIEW_ROLE_ID=ROLE_ID     # 要確認
+INVROLE_ADMIN_ROLE_ID=ROLE_ID      # chatgpt-lab-admin
+INVROLE_LOG_CHANNEL_ID=CHANNEL_ID      # #member-log
+INVROLE_INVITED_CODES=INVITE_CODE               # 招待枠のコード
 INVROLE_DEBUG=1
 ```
 
@@ -398,7 +398,7 @@ async def _cmd_generate_expert_invites(self, message):
 ✅ 管理者ロール: chatgpt-lab-admin
 ✅ ログチャンネル: #member-log
 ✅ 招待枠コード: 1個設定済み
-   • `CNdj4dr74d`
+   • `INVITE_CODE`
 ✅ 監視中の招待: 5個
 ✅ 招待枠コード: サーバーに存在確認済み
 
@@ -423,8 +423,8 @@ async def _cmd_generate_expert_invites(self, message):
 2. 出力された招待枠コードを `.env` の `INVROLE_INVITED_CODES` に設定
 3. `docker compose down && docker compose up -d` で再起動
 4. QRコード作成
-   - 招待枠: https://discord.gg/INVITE_CODE
-   - 一般枠: https://discord.gg/INVITE_CODE
+   - 招待枠: https://discord.gg/INVITE_CODE_CODE
+   - 一般枠: https://discord.gg/INVITE_CODE_CODE
 
 #### イベント開始前
 
@@ -472,4 +472,4 @@ async def _cmd_generate_expert_invites(self, message):
 - 設計書: `docs/role-agent-implementation.md`
 - エージェント開発ガイド: `AGENT_GUIDE.md`
 - プロジェクト概要: `CLAUDE.md`
-- プランファイル: `/Users/kai/.claude/plans/piped-toasting-codd.md`
+- プランファイル: `/path/to/plan.md`
