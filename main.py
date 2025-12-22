@@ -46,11 +46,15 @@ def main():
 
     if run_once:
         print("Starting in RUN-ONCE mode (GitHub Actions compatible)...")
+        run_once_channel_id = os.getenv("DISCORD_RUN_ONCE_CHANNEL_ID")
+        if not run_once_channel_id:
+            is_github_actions = os.getenv("GITHUB_ACTIONS", "").strip().lower() in {"1", "true", "yes"}
+            run_once_channel_id = core_config.TARGET_CHANNEL_ID if is_github_actions else "1441302743229665422"
 
         @client.event
         async def on_ready():
             print(f'Logged in as {client.user} (Run-Once Mode)')
-            target_channel_id = config.TARGET_CHANNEL_ID
+            target_channel_id = run_once_channel_id
             target_channel = client.get_channel(int(target_channel_id)) if target_channel_id else None
 
             if target_channel and daily_reporter:
