@@ -57,6 +57,7 @@ class QuizSessionState:
 
     question_message_id: int = 0
     thread_id: int = 0
+    question_opened_at: float = 0.0
 
     # submissions per question_id per user_id
     submissions: Dict[str, Dict[str, Submission]] = field(default_factory=dict)
@@ -102,6 +103,7 @@ class QuizSessionState:
             current_question_id=str(d.get("current_question_id", "")),
             question_message_id=int(d.get("question_message_id", 0)),
             thread_id=int(d.get("thread_id", 0)),
+            question_opened_at=float(d.get("question_opened_at", 0.0)),
             submissions={},
             grading={},
             totals={str(k): int(v) for k, v in (d.get("totals", {}) or {}).items()},

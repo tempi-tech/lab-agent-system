@@ -5,7 +5,7 @@ from dotenv import load_dotenv
 # Load env first so daily_reporter config picks it up.
 load_dotenv()
 
-TEST_CHANNEL_ID = int(os.getenv("SMOKE_TEST_CHANNEL_ID", "1441302743229665422"))
+TEST_CHANNEL_ID = int(os.getenv("SMOKE_TEST_CHANNEL_ID", "0"))
 os.environ["DISCORD_CHANNEL_ID"] = str(TEST_CHANNEL_ID)
 os.environ["SOURCE_CHANNEL_IDS"] = str(TEST_CHANNEL_ID)
 
@@ -22,6 +22,8 @@ def _require_env(name: str) -> str:
 def main() -> None:
     _require_env("DISCORD_TOKEN")
     _require_env("GOOGLE_API_KEY")
+    if TEST_CHANNEL_ID == 0:
+        raise RuntimeError("Missing env: SMOKE_TEST_CHANNEL_ID")
 
     intents = discord.Intents.default()
     intents.message_content = True

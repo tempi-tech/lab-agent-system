@@ -1,8 +1,10 @@
 from __future__ import annotations
 
 import os
+import re
 import time
 import secrets
+import asyncio
 from pathlib import Path
 from typing import Dict, List, Optional, Tuple
 
@@ -12,7 +14,13 @@ from src.core.agent_base import BaseAgent
 from .config import QuizSpec, QuestionType
 from .storage import JsonStore, QuizSessionState, Submission, QuestionGrading
 from .utils import parse_quiz_command, normalize_choice, sha256_hex, deterministic_draw, clip
-from .scoring import GeminiLLM, score_creative_answers
+from .scoring import (
+    GeminiLLM,
+    ClaudeLLM,
+    score_creative_answers,
+    score_knowledge_answers,
+    comment_incorrect_answer,
+)
 
 
 def _env_int_list(name: str) -> List[int]:
@@ -31,14 +39,24 @@ def _env_int_list(name: str) -> List[int]:
     return out
 
 
+def _env_int(name: str) -> int:
+    raw = (os.getenv(name) or "").strip()
+    if not raw:
+        return 0
+    try:
+        return int(raw)
+    except ValueError:
+        return 0
+
+
 class QuizMasterAgent(BaseAgent):
     """
     One-night quiz runner agent.
     Admin controls with `!quiz ...` in a designated channel.
 
     Participant flow:
-    - Bot posts each question as a message and creates a thread for answers.
-    - Participants answer by sending a message in the thread.
+    - Bot posts each question as a forum post.
+    - Participants answer by sending a message in that post.
     - `!quiz close` grades and posts interim results.
     """
 
@@ -56,6 +74,9 @@ class QuizMasterAgent(BaseAgent):
         # Who can operate
         self.admin_user_ids = set(_env_int_list("QUIZ_ADMIN_USER_IDS"))
         self.admin_role_ids = set(_env_int_list("QUIZ_ADMIN_ROLE_IDS"))  # optional
+        self.admin_channel_id = _env_int("QUIZ_ADMIN_CHANNEL_ID")
+        self.forum_channel_id = _env_int("QUIZ_FORUM_CHANNEL_ID")
+        self.debug = (os.getenv("QUIZ_DEBUG") or "").strip().lower() in {"1", "true", "yes"}
 
         # Default quiz JSON
         self.default_quiz_path = os.getenv(
@@ -67,9 +88,14 @@ class QuizMasterAgent(BaseAgent):
         self.client: Optional[discord.Client] = None
         self.quiz: Optional[QuizSpec] = None
         self.state: Optional[QuizSessionState] = None
+        self._webhook: Optional[discord.Webhook] = None
 
         # LLM
-        self.llm = GeminiLLM(model=os.getenv("QUIZ_GEMINI_MODEL", "gemini-3-flash-preview"))
+        provider = (os.getenv("QUIZ_LLM_PROVIDER") or "gemini").strip().lower()
+        if provider == "claude":
+            self.llm = ClaudeLLM(model=os.getenv("QUIZ_CLAUDE_MODEL"))
+        else:
+            self.llm = GeminiLLM(model=os.getenv("QUIZ_GEMINI_MODEL", "gemini-3-flash-preview"))
 
     async def on_ready(self, client: discord.Client):
         self.client = client
@@ -82,6 +108,27 @@ class QuizMasterAgent(BaseAgent):
                 self.quiz = None
 
         print("[quiz_master] Ready. state_loaded=", bool(self.state))
+
+    async def _get_or_create_webhook(self, forum: discord.ForumChannel) -> discord.Webhook:
+        if self._webhook:
+            return self._webhook
+
+        name = (os.getenv("QUIZ_WEBHOOK_NAME") or "QuizMaster Webhook").strip() or "QuizMaster Webhook"
+        webhooks = await forum.webhooks()
+        webhook = next((wh for wh in webhooks if wh.name == name), None)
+        if webhook is None:
+            webhook = await forum.create_webhook(name=name)
+
+        avatar_path = Path(os.getenv("QUIZ_BOT_AVATAR_PATH", "src/agents/quiz_master/Airi.jpg"))
+        if avatar_path.exists():
+            try:
+                avatar_bytes = avatar_path.read_bytes()
+                await webhook.edit(avatar=avatar_bytes)
+            except Exception as e:
+                print(f"[quiz_master] Webhook avatar update failed: {type(e).__name__}")
+
+        self._webhook = webhook
+        return webhook
 
     def _is_admin(self, message: discord.Message) -> bool:
         if not message.guild:
@@ -109,15 +156,53 @@ class QuizMasterAgent(BaseAgent):
             self.quiz = QuizSpec.load_json(self.repo_root / self.default_quiz_path)
         return self.quiz
 
+    async def _debug_log(self, channel: discord.abc.Messageable, text: str) -> None:
+        if self.debug:
+            try:
+                await channel.send(f"🧪 [quiz_debug] {text}")
+            except Exception:
+                pass
+        print(f"[quiz_master][debug] {text}")
+
+    async def _get_forum_channel(self, channel: discord.abc.Messageable) -> Optional[discord.ForumChannel]:
+        if not self.forum_channel_id:
+            await channel.send("❌ QUIZ_FORUM_CHANNEL_ID が未設定です。")
+            return None
+        if not self.client:
+            await channel.send("❌ QuizMaster が未初期化です。")
+            return None
+        forum = self.client.get_channel(self.forum_channel_id)
+        if forum is None:
+            try:
+                forum = await self.client.fetch_channel(self.forum_channel_id)
+            except Exception as e:
+                await channel.send(f"❌ フォーラム取得に失敗しました: {type(e).__name__}")
+                return None
+        if not isinstance(forum, discord.ForumChannel):
+            await channel.send("❌ QUIZ_FORUM_CHANNEL_ID がフォーラムではありません。")
+            return None
+        return forum
+
     async def on_message(self, message: discord.Message):
-        # ignore bot/self messages
-        if message.author.bot:
+        # ignore bot/self/webhook messages
+        if message.author.bot or message.webhook_id:
             return
 
         # 1) Admin command handling
         cmd = parse_quiz_command(message.content)
         if cmd and self._is_admin(message):
+            if not self.admin_channel_id:
+                await message.channel.send("❌ QUIZ_ADMIN_CHANNEL_ID が未設定です。")
+                return
+            if message.channel.id != self.admin_channel_id:
+                await message.channel.send("このコマンドは運営チャンネルで実行してください。")
+                return
             sub, args = cmd
+            await self._debug_log(
+                message.channel,
+                f"cmd={sub} channel_id={message.channel.id} admin_channel_id={self.admin_channel_id} "
+                f"forum_channel_id={self.forum_channel_id}",
+            )
             await self._handle_admin_command(message, sub, args)
             return
 
@@ -252,31 +337,73 @@ class QuizMasterAgent(BaseAgent):
         st.is_question_open = True
 
         # Post question
-        header = f"**Q{next_index+1}. {q.title}** ({q.points}pt / 制限 {q.time_limit_sec}s)\n"
+        header = f"**Q{next_index+1}. {q.title}**\n"
         prompt = q.prompt.strip()
         body = header + "\n" + prompt + "\n\n"
 
         if q.type == QuestionType.KNOWLEDGE and q.options:
             opts = "\n".join([f"**{o.key}.** {o.text}" for o in q.options])
             body += opts + "\n\n"
-            body += "📝 回答はこのスレッドに **A/B/C/D**（または 1/2/3/4）で送ってください。"
+            body += "📝 回答はこの投稿に **A/B/C/D**（または 1/2/3/4）で送ってください。"
+        elif q.type == QuestionType.KNOWLEDGE:
+            body += "📝 回答はこの投稿に **一言**で送ってください。\n"
+            if q.grading == "llm":
+                label_map = {
+                    "originality": "独創性",
+                    "clarity": "明快さ",
+                    "relevance": "お題適合",
+                    "insight": "洞察",
+                    "humor": "面白さ",
+                }
+                keys = q.criteria or ["originality", "clarity", "relevance", "insight", "humor"]
+                labels = "/".join([label_map.get(k, k) for k in keys])
+                body += f"🤖 Claudeが{len(keys)}観点（{labels}）で採点します。"
+            else:
+                body += "✅ 正誤判定"
         else:
-            body += f"📝 回答はこのスレッドに送ってください（{q.max_chars}文字目安）。AIが採点します。"
+            if q.max_chars <= 120:
+                body += "📝 回答はこの投稿に送ってください（50〜100文字目安）。\n"
+            else:
+                body += f"📝 回答はこの投稿に送ってください（{q.max_chars}文字目安）。\n"
+            label_map = {
+                "originality": "独創性",
+                "clarity": "明快さ",
+                "relevance": "お題適合",
+                "insight": "洞察",
+                "humor": "面白さ",
+            }
+            keys = q.criteria or ["originality", "clarity", "relevance", "insight", "humor"]
+            labels = "/".join([label_map.get(k, k) for k in keys])
+            body += f"🤖 Claudeが{len(keys)}観点（{labels}）で採点します。"
 
-        msg = await channel.send(body)
+        forum = await self._get_forum_channel(channel)
+        if forum is None:
+            return
 
-        # Create thread for answers
         try:
-            thread = await msg.create_thread(
-                name=f"Q{next_index+1}-{q.id}",
-                auto_archive_duration=60,  # minutes
+            webhook = await self._get_or_create_webhook(forum)
+            msg = await webhook.send(
+                content=body,
+                thread_name=f"Q{next_index+1}: {q.title}",
+                wait=True,
             )
-        except Exception:
-            # fallback: no thread
-            thread = None
+        except Exception as e:
+            await channel.send(f"❌ フォーラム投稿の作成に失敗しました: {type(e).__name__}")
+            return
+
+        thread = getattr(msg, "thread", None)
+        if thread is None:
+            await channel.send("❌ フォーラム投稿の作成に失敗しました: thread が取得できません。")
+            return
+
+        await self._debug_log(channel, f"forum_post_created thread_id={thread.id} forum_id={forum.id}")
 
         st.question_message_id = msg.id
-        st.thread_id = thread.id if thread else 0
+        try:
+            st.question_opened_at = msg.created_at.timestamp()
+        except Exception:
+            st.question_opened_at = time.time()
+        st.thread_id = thread.id
 
         # ensure dicts
         st.submissions.setdefault(q.id, {})
@@ -284,11 +411,20 @@ class QuizMasterAgent(BaseAgent):
 
         self.store.save(st)
 
-        if thread:
-            await thread.send(
-                "✅ このスレッドに回答してください！\n"
-                "（上書き回答したい場合は、もう一度送ると最後のメッセージを採用します）"
+        if self.quiz.allow_answer_edit:
+            await webhook.send(
+                content=(
+                    "📨 この投稿に回答してください！\n"
+                    "（上書き回答したい場合は、もう一度送ると最後のメッセージを採用します）"
+                ),
+                thread=thread,
             )
+        else:
+            await webhook.send(
+                content="📨 この投稿に回答してください！\n（回答は1人1回・上書き不可）",
+                thread=thread,
+            )
+        await channel.send(f"✅ フォーラムに出題しました: {thread.mention}")
         await channel.send("⏱️ 司会: 時間になったら `!quiz close` で締めてください。")
 
     async def _capture_submission(self, message: discord.Message):
@@ -300,7 +436,9 @@ class QuizMasterAgent(BaseAgent):
         content = message.content.strip()
         if not content:
             return
-        if len(content) > 4000:
+        if q.max_chars and len(content) > q.max_chars:
+            content = content[: q.max_chars] + "…"
+        elif len(content) > 4000:
             content = content[:4000] + "…"
 
         uid = str(message.author.id)
@@ -319,9 +457,9 @@ class QuizMasterAgent(BaseAgent):
         st.users[uid] = message.author.display_name
         self.store.save(st)
 
-        # lightweight ack: react ✅ to reduce channel noise
+        # lightweight ack: react to reduce channel noise
         try:
-            await message.add_reaction("✅")
+            await message.add_reaction("📨")
         except Exception:
             pass
 
@@ -344,10 +482,26 @@ class QuizMasterAgent(BaseAgent):
             await channel.send("回答がありませんでした。")
             return
 
+        criteria: Dict[str, Dict[str, int]] = {}
+
         if q.type == QuestionType.KNOWLEDGE:
-            scores, meta = self._grade_knowledge(q, subs)
-            reasons: Dict[str, str] = {}
+            if q.grading == "llm":
+                await asyncio.sleep(1)
+                answers_for_llm = [(str(s.user_id), s.user_display, s.content) for s in subs]
+                scores, reasons, meta = await score_knowledge_answers(
+                    self.llm,
+                    question_title=q.title,
+                    question_prompt=q.prompt,
+                    rubric=q.rubric,
+                    answers=answers_for_llm,
+                    points=q.points,
+                    criteria_keys=q.criteria or None,
+                )
+                criteria = (meta.get("criteria") or {}) if isinstance(meta, dict) else {}
+            else:
+                scores, reasons, meta = await self._grade_knowledge(q, subs)
         else:
+            await asyncio.sleep(1)
             answers_for_llm: List[Tuple[str, str, str]] = [(str(s.user_id), s.user_display, s.content) for s in subs]
             scores, reasons, meta = await score_creative_answers(
                 self.llm,
@@ -356,7 +510,9 @@ class QuizMasterAgent(BaseAgent):
                 rubric=q.rubric,
                 answers=answers_for_llm,
                 points=q.points,
+                criteria_keys=q.criteria or None,
             )
+            criteria = (meta.get("criteria") or {}) if isinstance(meta, dict) else {}
 
         # Persist grading
         g = st.grading.setdefault(qid, QuestionGrading())
@@ -371,22 +527,29 @@ class QuizMasterAgent(BaseAgent):
         self.store.save(st)
 
         # Announce result summary
-        await self._post_question_result(channel, q, scores, reasons)
+        await self._post_question_result(channel, q, scores, reasons, criteria)
 
-        # Optional: lucky draw among respondents
-        candidates = list(scores.keys()) if scores else [str(s.user_id) for s in subs]
-        lucky = deterministic_draw(st.draw_seed, f"lucky|{qid}", candidates)
-        if lucky:
-            name = st.users.get(str(lucky), f"<@{lucky}>")
-            await channel.send(f"🎁 **ラッキー賞（抽選）**: {name} さん！")
+        # ラッキー賞は廃止
 
-    def _grade_knowledge(self, q, subs: List[Submission]) -> Tuple[Dict[str, int], Dict[str, str]]:
+    async def _grade_knowledge(self, q, subs: List[Submission]) -> Tuple[Dict[str, int], Dict[str, str], Dict[str, str]]:
         # Determine correct option / accepted answers
         correct_opt = (q.correct_option or "").upper().strip()
-        accepted = set([a.strip().lower() for a in (q.accepted_answers or []) if a.strip()])
+        accepted_raw = [a.strip() for a in (q.accepted_answers or []) if a.strip()]
+        accepted_norm = set([a.lower() for a in accepted_raw])
+
+        def _normalize_free_answer(s: str) -> str:
+            # case-insensitive, ignore spaces and punctuation for simple matching
+            return re.sub(r"[^a-z0-9]+", "", (s or "").strip().lower())
+
+        accepted_loose = set([_normalize_free_answer(a) for a in accepted_raw])
 
         scores: Dict[str, int] = {}
-        meta: Dict[str, str] = {"correct_option": correct_opt, "accepted_answers_count": str(len(accepted))}
+        reasons: Dict[str, str] = {}
+        correct_display = correct_opt or (accepted_raw[0] if accepted_raw else "")
+        meta: Dict[str, str] = {
+            "correct_option": correct_opt,
+            "accepted_answers_count": str(len(accepted_raw)),
+        }
 
         for s in subs:
             uid = str(s.user_id)
@@ -399,12 +562,19 @@ class QuizMasterAgent(BaseAgent):
             ok = False
             if correct_opt and norm_choice == correct_opt:
                 ok = True
-            elif accepted and norm_text in accepted:
+            elif accepted_norm and norm_text in accepted_norm:
+                ok = True
+            elif accepted_loose and _normalize_free_answer(raw) in accepted_loose:
                 ok = True
 
-            scores[uid] = q.points if ok else 0
+            if ok:
+                scores[uid] = q.points
+                reasons[uid] = "✅ 正解です"
+            else:
+                scores[uid] = 0
+                reasons[uid] = "❌ 答えが不正確です"
 
-        return scores, meta
+        return scores, reasons, meta
 
     async def _post_question_result(
         self,
@@ -412,28 +582,134 @@ class QuizMasterAgent(BaseAgent):
         q,
         scores: Dict[str, int],
         reasons: Dict[str, str],
+        criteria: Dict[str, Dict[str, int]] | None = None,
     ):
         assert self.state
         st = self.state
-        # sort by points desc
-        ranking = sorted(scores.items(), key=lambda kv: kv[1], reverse=True)
-        top = ranking[:10]
+        subs = st.submissions.get(q.id, {}) if st.submissions else {}
+        times: Dict[str, float] = {}
+        if st.question_opened_at:
+            for uid, sub in subs.items():
+                try:
+                    times[uid] = max(0.0, float(sub.created_at) - float(st.question_opened_at))
+                except Exception:
+                    pass
 
-        lines = []
-        for uid, pts in top:
+        def _crit_text(uid: str, keys: List[str]) -> str:
+            crit = (criteria or {}).get(uid) or {}
+            if not crit:
+                return ""
+            short = []
+            for k in keys:
+                if k in crit:
+                    short.append(f"{k[0].upper()}{crit[k]}")
+            return " ".join(short)
+
+        # ranking strategy
+        ids = list(scores.keys())
+        if q.type == QuestionType.KNOWLEDGE and q.grading == "exact":
+            # Q1: correct first, then fastest
+            def _key(uid: str):
+                return (0 if scores.get(uid, 0) > 0 else 1, times.get(uid, 1e9))
+            ranking = sorted(ids, key=_key)
+        elif q.type == QuestionType.KNOWLEDGE and q.grading == "llm":
+            # Q2: score desc, then fastest
+            def _key(uid: str):
+                return (-scores.get(uid, 0), times.get(uid, 1e9))
+            ranking = sorted(ids, key=_key)
+        else:
+            # Q3: score desc
+            ranking = sorted(ids, key=lambda uid: scores.get(uid, 0), reverse=True)
+
+        criteria_keys = q.criteria or ["originality", "clarity", "relevance", "insight", "humor"]
+        label_map = {
+            "originality": "独創性",
+            "clarity": "明快さ",
+            "relevance": "お題適合",
+            "insight": "洞察",
+            "humor": "面白さ",
+        }
+        criteria_labels = "/".join([label_map.get(k, k) for k in criteria_keys])
+
+        def _time_text(uid: str) -> str:
+            if uid not in times:
+                return ""
+            return f"回答時間 {times[uid]:.1f}秒"
+
+        # Admin channel output (all)
+        admin_lines = []
+        for uid in ranking:
+            pts = scores.get(uid, 0)
             name = st.users.get(uid, f"<@{uid}>")
             reason = reasons.get(uid, "")
-            if reason:
-                lines.append(f"- {name}: **{pts}pt** — {reason}")
+            crit_text = _crit_text(uid, criteria_keys)
+            time_text = _time_text(uid)
+            if q.type == QuestionType.KNOWLEDGE and q.grading == "exact":
+                mark = "✅" if pts > 0 else "❌"
+                admin_lines.append(f"- {name}: {mark} {time_text}".rstrip())
+            elif q.type == QuestionType.KNOWLEDGE and q.grading == "llm":
+                line = f"- {name}: **{pts}pt** {time_text} {crit_text}".rstrip()
+                admin_lines.append(line)
             else:
-                lines.append(f"- {name}: **{pts}pt**")
+                if reason:
+                    admin_lines.append(f"- {name}: **{pts}pt** — {reason} {crit_text}".rstrip())
+                else:
+                    admin_lines.append(f"- {name}: **{pts}pt** {crit_text}".rstrip())
 
-        msg = f"📊 **結果: {q.title}**\n" + "\n".join(lines)
-        await channel.send(clip(msg, 1800))
+        admin_msg = f"📊 **結果: {q.title}**\n" + "\n".join(admin_lines)
+        await channel.send(clip(admin_msg, 1800))
 
-        # If knowledge: show correct
-        if q.type == QuestionType.KNOWLEDGE and q.correct_option:
-            await channel.send(f"✅ 正解: **{q.correct_option}**")
+        # Forum output (all, gentle tone)
+        if self.client and st.thread_id:
+            thread = self.client.get_channel(st.thread_id)
+            if thread is None:
+                try:
+                    thread = await self.client.fetch_channel(st.thread_id)
+                except Exception:
+                    thread = None
+            if isinstance(thread, (discord.Thread, discord.TextChannel)):
+                if q.type == QuestionType.KNOWLEDGE and q.grading == "exact":
+                    forum_header = "✅ 結果発表です。全員の結果はこちらです！"
+                elif criteria:
+                    forum_header = (
+                        f"🤖 Claudeが{len(criteria_keys)}観点（{criteria_labels}）で採点しました。\n"
+                        "おつかれさまです。全員の結果はこちらです！"
+                    )
+                else:
+                    forum_header = "✅ 結果発表です。全員の結果はこちらです！"
+
+                subs = st.submissions.get(q.id, {}) if st.submissions else {}
+                forum_lines = []
+                for idx, uid in enumerate(ranking, start=1):
+                    pts = scores.get(uid, 0)
+                    name = st.users.get(uid, f"<@{uid}>")
+                    answer = subs.get(uid).content if uid in subs else ""
+                    answer = clip(answer.replace("\n", " "), 140)
+                    comment = reasons.get(uid, "")
+                    comment = clip(comment.replace("\n", " "), 120)
+                    crit_text = _crit_text(uid, criteria_keys)
+                    time_text = _time_text(uid)
+                    if q.type == QuestionType.KNOWLEDGE and q.grading == "exact":
+                        mark = "✅" if pts > 0 else "❌"
+                        line = f"{idx}. {name} — {mark} {time_text}"
+                    elif q.type == QuestionType.KNOWLEDGE and q.grading == "llm":
+                        line = f"{idx}. {name} — **{pts}pt** {time_text} {crit_text}".rstrip()
+                    else:
+                        line = (
+                            f"{idx}. {name} — **{pts}pt** {crit_text}\n"
+                            f"> 回答: {answer}\n"
+                            f"> コメント: {comment or '（コメントなし）'}"
+                        )
+                    forum_lines.append(line)
+
+                forum_msg = forum_header + "\n\n" + "\n\n".join(forum_lines)
+                forum_msg = clip(forum_msg, 1800)
+
+                if isinstance(thread, discord.Thread) and isinstance(thread.parent, discord.ForumChannel):
+                    webhook = await self._get_or_create_webhook(thread.parent)
+                    await webhook.send(content=forum_msg, thread=thread)
+                else:
+                    await thread.send(forum_msg)
 
         # Post leaderboard
         await self._post_leaderboard(channel)
@@ -510,5 +786,5 @@ class QuizMasterAgent(BaseAgent):
             "- `!quiz end` : 終了（seed公開&優勝発表）\n"
             "- `!quiz reset` : 状態リセット\n"
             "\n"
-            "参加者は、各問題の **スレッド** に回答メッセージを送るだけでOKです。"
+            "参加者は、各問題の **フォーラム投稿** に回答メッセージを送るだけでOKです。"
         )

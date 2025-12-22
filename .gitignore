@@ -17,5 +17,8 @@ env/
 # Logs
 *.log
 
+# Local data
+data/
+
 # OS specific
 .DS_Store

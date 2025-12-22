@@ -28,6 +28,7 @@ class Question:
     prompt: str
     points: int = 25
     time_limit_sec: int = 180
+    grading: str = "exact"  # knowledge: exact / llm, creative: llm
 
     # knowledge only
     options: List[QuestionOption] = field(default_factory=list)
@@ -37,6 +38,7 @@ class Question:
     # creative only
     rubric: str = ""  # free text rubric
     max_chars: int = 600
+    criteria: List[str] = field(default_factory=list)
 
     @staticmethod
     def from_dict(d: Dict[str, Any]) -> "Question":
@@ -55,7 +57,7 @@ class Question:
         if correct_opt:
             correct_opt = str(correct_opt).strip().upper()
 
-        accepted = [str(x).strip().lower() for x in (d.get("accepted_answers") or [])]
+        accepted = [str(x).strip() for x in (d.get("accepted_answers") or [])]
 
         # if options have is_correct, derive correct_option
         if not correct_opt and opts:
@@ -71,11 +73,13 @@ class Question:
             prompt=str(d["prompt"]),
             points=int(d.get("points", 25)),
             time_limit_sec=int(d.get("time_limit_sec", 180)),
+            grading=str(d.get("grading", "exact")).strip().lower(),
             options=opts,
             accepted_answers=accepted,
             correct_option=correct_opt,
             rubric=str(d.get("rubric", "")),
             max_chars=int(d.get("max_chars", 600)),
+            criteria=list(d.get("criteria", [])),
         )
 
 
