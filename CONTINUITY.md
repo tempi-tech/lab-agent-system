@@ -1,34 +1,42 @@
 Goal (incl. success criteria):
-- Run a thorough leak scan (emails/tokens/URLs), sanitize invite links, and rewrite history to remove real invite codes.
+- Daily reporter output: only Discord message URLs, no external links, "ラボちゃんより" removed, and omit "隠れたお宝リンク" when empty; ensure links stay clickable.
 
 Constraints/Assumptions:
 - Follow AGENTS.md: update this ledger each turn; keep facts only.
-- Sandbox: workspace-write; network restricted.
+- Sandbox: workspace-write; network restricted (need approval to run Discord/API).
 
 Key decisions:
-- Placeholder URLs (discord.com/channels/xxx/yyy/zzz or GUILD_ID/CHANNEL_ID) are acceptable.
-- Replace discord.gg/<code> with discord.gg/INVITE_CODE.
+- Local `python main.py --once` posts to test channel `1441302743229665422` unless `DISCORD_RUN_ONCE_CHANNEL_ID` is set; GitHub Actions uses `DISCORD_CHANNEL_ID`.
+- Link corruption was caused by sanitizer; removed over-aggressive normalization.
 
 State:
-- Working tree: no emails/tokens/keys; invite links are placeholders.
-- History: only placeholder invite links remain (some commits show INVITE_CODE_CODE due to underscore handling).
-- git history was rewritten (filter-branch + GC); force-push required to update remote.
+- `src/agents/daily_reporter/logic.py` sanitized to remove non-Discord URLs and footer; empty hidden-links section omitted.
+- Topic handling updated: topics without `[参考](URL)` are dropped; editor instructed to paste topics verbatim; topic summarizer skips items without URL.
+- Added section layout normalizer to enforce line breaks around headings and added prompt rule to keep headings on their own lines.
+ - Debug logging removed; no debug log file retained.
 
 Done:
-- Replaced discord.gg invite links in docs with placeholders.
-- Rewrote git history to replace discord.gg/<code>.
-- Removed refs/original and ran git gc --prune=now.
+- Investigated link issues; fixed sanitizer; verified via debug log.
+- Confirmed test-channel output correct after fix.
+- Ran `python main.py --once` again; bot connected, fetched 42 messages, generated report, and exited without errors.
+- Ran `python main.py --once` after topic-format enforcement; bot connected, fetched 42 messages, generated report, and exited without errors.
+- Ran `python main.py --once` after section layout normalization; bot connected, fetched 42 messages, generated report, and exited without errors.
+- User confirmed latest test-channel output looks good.
+- Posted a report to production channel `842348486234341407` via `DISCORD_RUN_ONCE_CHANNEL_ID`.
+- Removed debug logging and deleted `data/daily_reporter_debug.log`.
 
 Now:
-- Report scan results and note history rewrite; confirm next steps for force-push.
+- Commit and push changes.
 
 Next:
-- Optionally normalize INVITE_CODE_CODE to INVITE_CODE across history (cosmetic).
+- Commit and push changes.
 
 Open questions (UNCONFIRMED if needed):
-- Proceed with force-push after verifying remote expectations?
+- None.
 
 Working set (files/ids/commands):
 - CONTINUITY.md
-- docs/invite_role_assigner_implementation_log.md
-- docs/role-agent-implementation.md
+- src/agents/daily_reporter/logic.py
+- main.py
+- data/daily_reporter_debug.log
+- command: `python main.py --once`
