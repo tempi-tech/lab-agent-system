@@ -42,7 +42,6 @@ def sanitize_report_output(text: str) -> str:
             continue
         lines.append(line)
     lines = remove_invalid_topic_lines(lines)
-    lines = remove_empty_hidden_links_section(lines)
     normalized = "\n".join(lines).strip()
     return normalize_section_layout(normalized)
 
@@ -58,10 +57,11 @@ def remove_invalid_topic_lines(lines: list[str]) -> list[str]:
             i += 1
             while i < len(lines):
                 next_line = lines[i].strip()
-                if next_line.startswith("✨") or next_line.startswith("🔗") or next_line.startswith("🆕") or next_line.startswith("📅") or next_line.startswith("📝"):
+                if next_line.startswith("✨") or next_line.startswith("🆕") or next_line.startswith("📅") or next_line.startswith("📝"):
                     result.append(lines[i])
                     break
-                if next_line and "[参考](" not in next_line:
+                # Validate topic line: must contain Discord URL
+                if next_line and DISCORD_URL_PREFIX not in next_line:
                     i += 1
                     continue
                 result.append(lines[i])
@@ -77,7 +77,6 @@ def normalize_section_layout(text: str) -> str:
         "📅 **今日のラボ日誌**",
         "📝 **トピック**",
         "✨ **今日のハイライト**",
-        "🔗 **隠れたお宝リンク**",
         "🆕 **新しいセンパイ**",
         "🆕 **New Members**",
     ]
@@ -98,41 +97,6 @@ def normalize_section_layout(text: str) -> str:
 
     normalized = re.sub(r"\n{3,}", "\n\n", normalized)
     return normalized.strip()
-
-
-def remove_empty_hidden_links_section(lines: list[str]) -> list[str]:
-    header = "🔗 **隠れたお宝リンク**"
-    result: list[str] = []
-    i = 0
-    while i < len(lines):
-        line = lines[i]
-        if line.strip() == header:
-            j = i + 1
-            has_discord_link = False
-            while j < len(lines):
-                next_line = lines[j].strip()
-                if next_line.startswith("🆕") or next_line.startswith("📅") or next_line.startswith("📝") or next_line.startswith("✨") or next_line.startswith("🔗"):
-                    break
-                if DISCORD_URL_PREFIX in next_line:
-                    has_discord_link = True
-                j += 1
-
-            if not has_discord_link:
-                i = j
-                continue
-            result.append(line)
-            k = i + 1
-            while k < j:
-                if re.match(r"^\s*-?\s*なし", lines[k]):
-                    k += 1
-                    continue
-                result.append(lines[k])
-                k += 1
-            i = j
-            continue
-        result.append(line)
-        i += 1
-    return result
 
 
 def sanitize_message_content(text: str) -> str:
@@ -323,10 +287,10 @@ class DailyReporterAgent(BaseAgent):
             - `URL:` が確認できないトピックは**出力しない**
 
             **出力形式（必ず守ること）:**
-            - <トピック内容> [参考](<該当メッセージのURL>)
+            - <トピック内容> <該当メッセージのURL>
 
             例:
-            - AIモデルの比較議論が白熱 [参考](https://discord.com/channels/xxx/yyy/zzz)
+            - AIモデルの比較議論が白熱 https://discord.com/channels/xxx/yyy/zzz
             """,
             output_key=config.STATE_TOPICS
         )
@@ -355,26 +319,6 @@ class DailyReporterAgent(BaseAgent):
             output_key=config.STATE_HIGHLIGHT
         )
 
-        link_curator = LlmAgent(
-            name="LinkCurator",
-            model=config.GEMINI_MODEL,
-            instruction="""あなたは「リンク選別係」です。
-            チャット履歴に含まれるURLの中から、**「みんなが見逃しそうな隠れたお宝情報」**や**「議論の裏付けとなる重要なドキュメント」**を最大3つ選んでください。
-            
-            単なる宣伝や既知の有名サイトは避けてください。
-            - `https://discord.com/` で始まるURLのみを選んでください。
-            - 外部リンクそのものは選ばず、該当メッセージの `URL:` 行（Discord内の元投稿）を使ってください。
-            - URLは**空白や改行で分割しない**でそのまま出力する
-            - 該当するリンクがなければ「なし」としてください。
-            - 「hxxp」「h ps」「h\tt\tp」などの伏せ字は**絶対に使わない**
-            
-            出力形式:
-            - <URL> (理由: <一言コメント>)
-            なければ「なし」としてください。
-            """,
-            output_key=config.STATE_LINKS
-        )
-
         editor_in_chief = LlmAgent(
             name="EditorInChief",
             model=config.GEMINI_MODEL,
@@ -391,38 +335,32 @@ class DailyReporterAgent(BaseAgent):
             ## 入力情報
             【トピック】: {{topics_summary}}
             【ハイライト】: {{highlight_analysis}}
-            【リンク】: {{link_summary}}
             【新メンバー】: {{new_members}}
-            
+
             ## 出力ルール
             - **スマホ1画面（10行以内）**に収まる超コンパクトなレポートにしてください。
             - ユーザーへの言及は `<@ユーザーID>` の形式を使ってメンションにしてください（入力のIDを使ってください）。
             - リンクはそのままURLを表示してください（Markdownリンク `[text](url)` はDiscordでプレビューされないことがあるため）。
-            - **リンクがある場合は必ず「理由」も併記してください。**
             - `https://discord.com/` 以外のリンクは絶対に出力しないでください。
             - 外部サイトに触れる場合はURLを書かず、内容だけを要約してください。
             - URLは**空白や改行で分割しない**でそのまま出力する
             - 「hxxp」「h ps」「h\tt\tp」などの伏せ字は**絶対に使わない**
             - 絵文字をたくさん使って、とびきり元気にしてください！
-            - **隠れたお宝リンクが無い場合**、そのセクションは**丸ごと省略**してください（「なし」と書かない）。
             - **新メンバーがいる場合のみ**、一番下に「🆕 New Members」セクションを作ってメンションしてください。いなければ省略。
             - **トピックの箇条書きは**「【トピック】」で渡される行を**改変せずそのまま貼り付け**てください（記号・リンク形式も変更禁止）。
             - **各セクション見出しは単独の行**にし、見出しの前後に改行を入れてください。
-            
+
             ## フォーマット例
             📅 **今日のラボ日誌**
 
             📝 **トピック**
-            - [トピック1] [参考](URL)
-            - [トピック2] [参考](URL)
+            - トピック1 https://discord.com/channels/xxx/yyy/zzz
+            - トピック2 https://discord.com/channels/xxx/yyy/zzz
 
             ✨ **今日のハイライト**
             [発言内容の要約] (by <@123456789>)
-            🔗 [元発言](https://discord.com/channels/...)
-            
-            🔗 **隠れたお宝リンク**
-            - https://discord.com/channels/... (理由: 〇〇)
-            
+            🔗 https://discord.com/channels/...
+
             🆕 **新しいセンパイ**
             <@987654321> ようこそッス！
             
@@ -433,7 +371,7 @@ class DailyReporterAgent(BaseAgent):
             output_key=config.STATE_FINAL_REPORT
         )
 
-        sub_agents = [topic_summarizer, link_curator]
+        sub_agents = [topic_summarizer]
         initial_state = {"new_members": new_members_str}
         
         if candidates_for_highlight:
