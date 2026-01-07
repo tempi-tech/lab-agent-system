@@ -171,13 +171,13 @@ class DailyReporterAgent(BaseAgent):
     async def fetch_daily_messages(self, channel, threshold):
         """Fetches messages from a channel (Text or Forum) since the threshold."""
         messages = []
-        
+
         if isinstance(channel, discord.TextChannel):
             print(f"Fetching from TextChannel: {channel.name}")
             async for msg in channel.history(after=threshold, limit=None):
                 if not msg.author.bot:
                     messages.append(msg)
-                    
+
         elif isinstance(channel, discord.ForumChannel):
             print(f"Fetching from ForumChannel: {channel.name}")
             # Iterate over active threads
@@ -185,8 +185,88 @@ class DailyReporterAgent(BaseAgent):
                 async for msg in thread.history(after=threshold, limit=None):
                     if not msg.author.bot:
                         messages.append(msg)
-        
+
         return messages
+
+    def format_tips_for_thread(self, raw_tips: str) -> str:
+        """TipsScoutの出力を読みやすいカード形式に整形"""
+        if not raw_tips or raw_tips.strip() == "なし":
+            return ""
+
+        tips_blocks = re.findall(
+            r"TIPS_START\s*(.*?)\s*TIPS_END",
+            raw_tips,
+            re.DOTALL
+        )
+
+        if not tips_blocks:
+            return ""
+
+        formatted_tips = ["💡 **明日試して欲しいこと**", ""]  # ヘッダー後に空行
+
+        for i, block in enumerate(tips_blocks, 1):
+            lines = block.strip().split("\n")
+            summary = ""
+            points = []
+            url = ""
+
+            for line in lines:
+                line = line.strip()
+                if line.startswith("概要:"):
+                    summary = line.replace("概要:", "").strip()
+                elif line.startswith("○"):
+                    point_text = line[1:].strip()
+                    if point_text:
+                        points.append(point_text)
+                elif line.startswith("- "):
+                    point_text = line[2:].strip()
+                    if point_text:
+                        points.append(point_text)
+                elif line.startswith("ポイント:"):
+                    point_text = line.replace("ポイント:", "").strip()
+                    if point_text:
+                        points.append(point_text)
+                elif line.startswith("URL:"):
+                    url = line.replace("URL:", "").strip()
+
+            if summary:
+                formatted_tips.append(f"**{i}. {summary}**")
+                for point in points:
+                    formatted_tips.append(f"○ {point}")
+                if url and url.startswith(DISCORD_URL_PREFIX):
+                    formatted_tips.append(f"📎 {url}")
+                formatted_tips.append("")  # 各Tips後に空行
+
+        return "\n".join(formatted_tips).rstrip()
+
+    async def post_tips_thread(
+        self,
+        main_message: discord.WebhookMessage,
+        tips_text: str,
+        webhook: discord.Webhook
+    ):
+        """Tipsをメインレポートのスレッドとして投稿"""
+        formatted_tips = self.format_tips_for_thread(tips_text)
+        if not formatted_tips:
+            print("No Tips to post (empty or 'なし').")
+            return None
+
+        try:
+            thread = await main_message.create_thread(
+                name="💡 明日試して欲しいこと",
+                auto_archive_duration=1440  # 24時間
+            )
+
+            await webhook.send(
+                content=formatted_tips,
+                thread=thread,
+                username=config.REPORTER_NAME
+            )
+            print(f"Tips thread created: {thread.name}")
+            return thread
+        except Exception as e:
+            print(f"Failed to create tips thread: {e}")
+            return None
 
     async def generate_summary(self, target_channel):
         # 1. Calculate Time Threshold (24 hours ago in JST)
@@ -300,12 +380,12 @@ class DailyReporterAgent(BaseAgent):
             model=config.GEMINI_MODEL,
             instruction="""あなたは「コミュニティ・ハイライトスカウト」です。
             チャット履歴を見て、**「最も深掘りしがいのある発言」**や**「興味深い知見」**を1つ選出してください。
-            
+
             **選定基準:**
             - 「誰が言ったか」ではなく「何を言ったか」で選んでください。
             - 運営メンバー(Admin)の発言でも、内容が有益なら選んで構いません。
             - 単なる挨拶や連絡事項は避けてください。
-            
+
             出力形式:
             Highlight: <発言内容の要約> (by <ユーザー名>)
             URL: <発言のURL>
@@ -317,6 +397,50 @@ class DailyReporterAgent(BaseAgent):
             - 「hxxp」「h ps」「h\tt\tp」などの伏せ字は**絶対に使わない**
             """,
             output_key=config.STATE_HIGHLIGHT
+        )
+
+        tips_scout = LlmAgent(
+            name="TipsScout",
+            model=config.GEMINI_MODEL,
+            instruction="""あなたは「実践Tips抽出係」です。
+            チャット履歴から、**明日すぐに試せる実践的なTips・小技・新機能情報**を抽出してください。
+
+            **選定基準:**
+            - 5分以内で試せる具体的なTips
+            - ツールの便利な使い方、設定、ショートカット
+            - 新機能やアップデート情報
+            - 生産性向上のハック
+
+            **厳守ルール:**
+            - チャット履歴に**実際に書かれている情報のみ**を抽出
+            - **推測や補完は絶対に禁止**（手順が不明なら「詳細は元投稿参照」とする）
+            - 該当するTipsがなければ「なし」と出力
+            - 最大5件まで
+            - URLは `https://discord.com/` で始まるものだけ使用
+            - URLは**空白や改行で分割しない**でそのまま出力する
+            - **具体的なコマンド・設定値・数値**がチャット履歴にあれば積極的に含める
+
+            **出力形式（厳守・余計な改行禁止）:**
+            各Tipsを以下の形式で出力。フィールド間に空行を入れないこと。
+
+            TIPS_START
+            概要: <何ができるか 1行で簡潔に>
+            ○ <ポイント1を1行で、具体的なコマンドや設定値があれば含める>
+            ○ <ポイント2を1行で>
+            URL: <Discord URL>
+            TIPS_END
+
+            **良い例（具体的で実践的）:**
+            TIPS_START
+            概要: ターミナル「Ghostty」の日本語フォント環境を整える
+            ○ `brew install --cask font-plemol-jp-nf` で日本語フォントを導入
+            ○ 設定ファイルに `font-family = PlemolJP35 Console NF` を記述
+            URL: https://discord.com/channels/xxx/yyy/zzz
+            TIPS_END
+
+            該当なしの場合: なし
+            """,
+            output_key=config.STATE_TIPS
         )
 
         editor_in_chief = LlmAgent(
@@ -335,6 +459,7 @@ class DailyReporterAgent(BaseAgent):
             ## 入力情報
             【トピック】: {{topics_summary}}
             【ハイライト】: {{highlight_analysis}}
+            【Tips情報】: {{tips_analysis}}
             【新メンバー】: {{new_members}}
 
             ## 出力ルール
@@ -346,6 +471,7 @@ class DailyReporterAgent(BaseAgent):
             - URLは**空白や改行で分割しない**でそのまま出力する
             - 「hxxp」「h ps」「h\tt\tp」などの伏せ字は**絶対に使わない**
             - 絵文字をたくさん使って、とびきり元気にしてください！
+            - **Tips情報が「なし」以外の場合のみ**、レポート末尾（新メンバーセクションの前）に「💡 明日試したいことはスレッドをチェック！」を追加。Tips情報が「なし」なら言及しない。
             - **新メンバーがいる場合のみ**、一番下に「🆕 New Members」セクションを作ってメンションしてください。いなければ省略。
             - **トピックの箇条書きは**「【トピック】」で渡される行を**改変せずそのまま貼り付け**てください（記号・リンク形式も変更禁止）。
             - **各セクション見出しは単独の行**にし、見出しの前後に改行を入れてください。
@@ -371,15 +497,17 @@ class DailyReporterAgent(BaseAgent):
             output_key=config.STATE_FINAL_REPORT
         )
 
-        sub_agents = [topic_summarizer]
+        sub_agents = [topic_summarizer, tips_scout]
         initial_state = {"new_members": new_members_str}
-        
+
         if candidates_for_highlight:
             sub_agents.append(highlight_scout)
             print(f"Highlight Candidates found: {len(set(candidates_for_highlight))} users.")
         else:
             print("No Highlight candidates found (only Bots). Skipping HighlightScout.")
             initial_state[config.STATE_HIGHLIGHT] = "本日は該当者なし（静かな一日でした）"
+
+        print("TipsScout enabled.")
 
         analysis_phase = ParallelAgent(
             name="AnalysisPhase",
@@ -410,16 +538,27 @@ class DailyReporterAgent(BaseAgent):
         
         content = types.Content(role='user', parts=[types.Part(text=prompt)])
         
+        tips_text = ""
+
         try:
             async for event in runner.run_async(user_id=config.USER_ID, session_id=config.SESSION_ID, new_message=content):
                 if event.is_final_response() and event.content and event.content.parts:
+                    if event.author == "TipsScout":
+                        tips_text = event.content.parts[0].text.strip()
+                        print(f"TipsScout output captured: {tips_text[:100]}...")
+
                     if event.author == "EditorInChief":
                         raw_text = event.content.parts[0].text.strip()
                         text = sanitize_report_output(raw_text)
-                        await webhook.send(
+                        main_message = await webhook.send(
                             content=text,
-                            username=config.REPORTER_NAME
+                            username=config.REPORTER_NAME,
+                            wait=True
                         )
-                    
+
+                        # Post Tips thread if available
+                        if tips_text and tips_text.strip() != "なし":
+                            await self.post_tips_thread(main_message, tips_text, webhook)
+
         except Exception as e:
             await target_channel.send(f"❌ Error: {e}")

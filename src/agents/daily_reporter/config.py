@@ -19,6 +19,7 @@ if not SOURCE_CHANNELS:
 # State Keys
 STATE_TOPICS = "topics_summary"
 STATE_HIGHLIGHT = "highlight_analysis"
+STATE_TIPS = "tips_analysis"
 STATE_FINAL_REPORT = "final_report"
 
 # Reporter Settings
