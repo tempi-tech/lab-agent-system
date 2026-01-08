@@ -10,3 +10,5 @@ services:
       # Mount the source code for easier development (optional)
       - ./src:/app/src
       - ./main.py:/app/main.py
+      # Data directory for persistent storage
+      - ./data:/app/data

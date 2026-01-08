@@ -17,7 +17,7 @@ env/
 # Logs
 *.log
 
-# Local data
+# Local data (runtime data, logs, configs with secrets)
 data/
 
 # OS specific
