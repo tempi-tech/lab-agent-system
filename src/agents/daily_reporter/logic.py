@@ -2,6 +2,7 @@ import asyncio
 import os
 import re
 import discord
+from pathlib import Path
 from datetime import datetime, timedelta, timezone
 from google.adk.agents import LlmAgent, ParallelAgent, SequentialAgent
 from google.adk.runners import InMemoryRunner
@@ -10,10 +11,12 @@ from . import config
 from src.core import config as core_config
 
 from src.core.agent_base import BaseAgent
+from src.agents.daily_reporter.storage import DailyDigestStore
 
 DISCORD_URL_PREFIX = "https://discord.com/"
 URL_PATTERN = re.compile(r"https?://\S+")
 EXTERNAL_LINK_PLACEHOLDER = "[外部リンク]"
+CHANNEL_LINK_PATTERN = re.compile(r"https://discord\.com/channels/\d+/(\d+)/\d+")
 
 
 
@@ -114,6 +117,7 @@ class DailyReporterAgent(BaseAgent):
     def __init__(self):
         self.client = None # Will be set in on_ready
         self.action_namespace = "daily_reporter"
+        self._digest_store = DailyDigestStore(Path("data/daily_reporter/digests.sqlite"))
 
     @property
     def name(self) -> str:
@@ -555,6 +559,22 @@ class DailyReporterAgent(BaseAgent):
                             username=config.REPORTER_NAME,
                             wait=True
                         )
+                        try:
+                            channel_ids = extract_channel_ids(text)
+                            created_at = (
+                                main_message.created_at.isoformat()
+                                if getattr(main_message, "created_at", None)
+                                else datetime.now(timezone.utc).isoformat()
+                            )
+                            self._digest_store.upsert_digest(
+                                message_id=main_message.id,
+                                channel_id=target_channel.id,
+                                created_at=created_at,
+                                content=text,
+                                extracted_channels=channel_ids,
+                            )
+                        except Exception as e:
+                            print(f"Failed to store daily digest: {e}")
 
                         # Post Tips thread if available
                         if tips_text and tips_text.strip() != "なし":
@@ -562,3 +582,15 @@ class DailyReporterAgent(BaseAgent):
 
         except Exception as e:
             await target_channel.send(f"❌ Error: {e}")
+
+
+def extract_channel_ids(text: str) -> list[int]:
+    ids: list[int] = []
+    seen = set()
+    for match in CHANNEL_LINK_PATTERN.finditer(text or ""):
+        channel_id = match.group(1)
+        if channel_id in seen:
+            continue
+        seen.add(channel_id)
+        ids.append(int(channel_id))
+    return ids
