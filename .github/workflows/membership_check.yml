@@ -1,0 +1,46 @@
+name: Membership Check
+
+on:
+  schedule:
+    # 毎週月曜 10:00 JST = 01:00 UTC
+    - cron: '0 1 * * 1'
+  workflow_dispatch:
+    inputs:
+      action:
+        description: 'Action to perform (status only for scheduled runs)'
+        required: false
+        default: 'status'
+        type: choice
+        options:
+          - status
+
+jobs:
+  check-membership:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.10'
+
+      - name: Install dependencies
+        run: pip install .
+
+      - name: Download latest member CSV
+        env:
+          NOTE_EXTRACT_AUTO_PATH: ${{ secrets.NOTE_EXTRACT_AUTO_PATH }}
+        run: |
+          # GitHub Actions環境ではCSVをダウンロードまたはマウントする必要がある
+          # 現時点ではローカル実行を想定（CSV_DIRをsecretsで設定）
+          echo "CSV directory: ${{ secrets.MEMBERSHIP_CHECKER_CSV_DIR }}"
+
+      - name: Run Membership Check
+        env:
+          DISCORD_TOKEN: ${{ secrets.DISCORD_TOKEN }}
+          MEMBERSHIP_CHECKER_LOG_CHANNEL_ID: ${{ secrets.MEMBERSHIP_CHECKER_LOG_CHANNEL_ID }}
+          MEMBERSHIP_CHECKER_CSV_DIR: ${{ secrets.MEMBERSHIP_CHECKER_CSV_DIR }}
+          INVROLE_CONFIG: ${{ secrets.INVROLE_CONFIG_PATH }}
+        run: python main.py --once membership

@@ -1,5 +1,6 @@
 import discord
 import logging
+from discord import app_commands
 from typing import TYPE_CHECKING
 
 from src.core.action_registry import ActionRegistry
@@ -12,6 +13,7 @@ class CommunityBot(discord.Client):
         super().__init__(intents=intents)
         self.agents = []
         self.actions = ActionRegistry()
+        self.tree = app_commands.CommandTree(self)
 
     def register_agent(self, agent_instance: 'BaseAgent'):
         """Registers an agent instance to the bot."""
