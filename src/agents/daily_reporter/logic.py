@@ -113,6 +113,16 @@ def sanitize_message_content(text: str) -> str:
     return URL_PATTERN.sub(replace_url, text)
 
 
+def resolve_daily_audio_path(now_utc: datetime) -> Path:
+    custom_path = os.getenv("DAILY_REPORT_WAV_PATH", "").strip()
+    if custom_path:
+        return Path(custom_path)
+
+    jst = timezone(timedelta(hours=9))
+    date_str = now_utc.astimezone(jst).strftime("%Y_%m_%d")
+    return Path(core_config.BASE_DIR) / f"lab_digest_{date_str}.wav"
+
+
 class DailyReporterAgent(BaseAgent):
     def __init__(self):
         self.client = None # Will be set in on_ready
@@ -271,6 +281,22 @@ class DailyReporterAgent(BaseAgent):
         except Exception as e:
             print(f"Failed to create tips thread: {e}")
             return None
+
+    async def post_audio_if_exists(self, webhook: discord.Webhook, now_utc: datetime) -> None:
+        audio_path = resolve_daily_audio_path(now_utc)
+        if not audio_path.exists():
+            print(f"Audio file not found: {audio_path}")
+            return
+
+        try:
+            await webhook.send(
+                content="🔊 デイリーダイジェスト音声はこちらッス！",
+                file=discord.File(str(audio_path), filename=audio_path.name),
+                username=config.REPORTER_NAME,
+            )
+            print(f"Audio posted: {audio_path.name}")
+        except Exception as e:
+            print(f"Failed to post audio: {e}")
 
     async def generate_summary(self, target_channel):
         # 1. Calculate Time Threshold (24 hours ago in JST)
@@ -579,6 +605,9 @@ class DailyReporterAgent(BaseAgent):
                         # Post Tips thread if available
                         if tips_text and tips_text.strip() != "なし":
                             await self.post_tips_thread(main_message, tips_text, webhook)
+
+                        # Post audio file if available
+                        await self.post_audio_if_exists(webhook, now_utc)
 
         except Exception as e:
             await target_channel.send(f"❌ Error: {e}")
