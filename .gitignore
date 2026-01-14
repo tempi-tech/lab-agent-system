@@ -22,3 +22,8 @@ data/
 
 # OS specific
 .DS_Store
+
+# Local notes
+CONTINUITY.md
+docs/TEST_PLAN_INVITE_ROLE.md
+logs_*.txt
