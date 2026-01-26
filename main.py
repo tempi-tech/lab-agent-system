@@ -11,6 +11,7 @@ from src.agents.invite_role_assigner.logic import InviteRoleAssignerAgent
 from src.agents.operator import get_agent as get_operator
 from src.agents.lab_onboarder import get_agent as get_lab_onboarder
 from src.agents.membership_checker import get_agent as get_membership_checker
+from src.agents.updates_assistant import get_agent as get_updates_assistant
 
 # Load environment variables
 load_dotenv()
@@ -47,6 +48,7 @@ def main():
                 client.register_agent(daily_reporter)
 
     if not run_once:
+        enable_updates = os.getenv("UPDATES_ASSISTANT_ENABLED", "1").strip().lower() not in {"0", "false", "no"}
         quiz_master = get_quiz_master()
         client.register_agent(quiz_master)
 
@@ -54,6 +56,8 @@ def main():
         client.register_agent(get_operator())
         client.register_agent(get_lab_onboarder())
         client.register_agent(get_membership_checker())
+        if enable_updates:
+            client.register_agent(get_updates_assistant())
 
     # Run Bot
     token = config.DISCORD_TOKEN
