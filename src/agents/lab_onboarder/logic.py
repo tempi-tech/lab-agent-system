@@ -378,9 +378,9 @@ class LabOnboarderAgent(BaseAgent):
 
         try:
             llm = GeminiLLM(model=self.config.llm_model)
-            result = await llm.agenerate(prompt)
-            if result and result.strip():
-                return result.strip()
+            result = await llm.generate(prompt)
+            if result and result.text and result.text.strip():
+                return result.text.strip()
         except Exception as exc:
             self._log(f"intro generation failed: {exc}")
 

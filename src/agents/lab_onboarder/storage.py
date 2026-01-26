@@ -96,9 +96,9 @@ class ProfileStore:
             INSERT INTO profiles (
                 discord_user_id, display_name, introduction, archetype,
                 x_profile_url, forum_thread_id, forum_message_id,
-                created_at, updated_at
+                created_at, updated_at, profile_url
             )
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             ON CONFLICT(discord_user_id) DO UPDATE SET
                 display_name = excluded.display_name,
                 introduction = excluded.introduction,
@@ -118,6 +118,7 @@ class ProfileStore:
                 forum_message_id,
                 now,
                 now,
+                "",  # legacy profile_url placeholder for NOT NULL constraint
             ),
         )
         self._conn.commit()
