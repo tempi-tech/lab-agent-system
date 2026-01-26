@@ -90,15 +90,11 @@ def _collect_admin_role_ids() -> Set[int]:
 
 @dataclass(frozen=True)
 class LabOnboarderConfig:
+    """Simplified configuration for Lab Onboarder agent."""
+
     guild_id: int
     profile_forum_channel_id: int
-    exa_api_key: str
-    x_api_bearer_token: str
     llm_model: Optional[str]
-    x_api_cache_ttl_minutes: int
-    url_context_enabled: bool
-    url_context_model: str
-    x_api_enabled: bool
     allowed_role_ids: Set[int]
     admin_role_ids: Set[int]
     sqlite_path: Path
@@ -116,28 +112,8 @@ def load_config() -> LabOnboarderConfig:
         "PROFILE_FORUM_CHANNEL_ID",
         required=True,
     )
-    exa_api_key = _get_env("LAB_ONBOARDER_EXA_API_KEY", "EXA_API_KEY")
-    if not exa_api_key:
-        raise RuntimeError("Missing required env var: EXA_API_KEY (or LAB_ONBOARDER_EXA_API_KEY)")
 
-    x_api_bearer_token = _get_env("LAB_ONBOARDER_X_API_BEARER_TOKEN", "X_API_BEARER_TOKEN")
     llm_model = _get_env("LAB_ONBOARDER_LLM_MODEL") or None
-    url_context_enabled = os.getenv("LAB_ONBOARDER_URL_CONTEXT_ENABLED", "").strip().lower() not in {
-        "0",
-        "false",
-        "no",
-    }
-    url_context_model = _get_env("LAB_ONBOARDER_URL_CONTEXT_MODEL", default="gemini-2.5-flash")
-    x_api_enabled = os.getenv("LAB_ONBOARDER_X_API_ENABLED", "").strip().lower() in {
-        "1",
-        "true",
-        "yes",
-    }
-    ttl_raw = os.getenv("LAB_ONBOARDER_X_API_CACHE_TTL_MINUTES", "").strip()
-    try:
-        x_api_cache_ttl_minutes = int(ttl_raw) if ttl_raw else 360
-    except ValueError:
-        raise ValueError("LAB_ONBOARDER_X_API_CACHE_TTL_MINUTES must be an integer")
 
     sqlite_path = Path(
         _get_env("LAB_ONBOARDER_SQLITE_PATH", default="data/lab_onboarder/profiles.sqlite")
@@ -171,13 +147,7 @@ def load_config() -> LabOnboarderConfig:
     return LabOnboarderConfig(
         guild_id=guild_id,
         profile_forum_channel_id=profile_forum_channel_id,
-        exa_api_key=exa_api_key,
-        x_api_bearer_token=x_api_bearer_token,
         llm_model=llm_model,
-        x_api_cache_ttl_minutes=x_api_cache_ttl_minutes,
-        url_context_enabled=url_context_enabled,
-        url_context_model=url_context_model,
-        x_api_enabled=x_api_enabled,
         allowed_role_ids=allowed_role_ids,
         admin_role_ids=admin_role_ids,
         sqlite_path=sqlite_path,
