@@ -23,8 +23,9 @@ data/
 # OS specific
 .DS_Store
 
+# Internal docs (not for public OSS)
+docs/
+
 # Local notes
 CONTINUITY.md
-docs/TEST_PLAN_INVITE_ROLE.md
-docs/gcp_operations.md
 logs_*.txt
