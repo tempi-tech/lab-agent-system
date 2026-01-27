@@ -26,3 +26,10 @@ class BaseAgent(ABC):
         Override this method to handle messages.
         """
         pass
+
+    async def on_thread_create(self, thread: discord.Thread) -> None:
+        """
+        Called when a thread is created.
+        Override this method to handle thread creation.
+        """
+        pass
