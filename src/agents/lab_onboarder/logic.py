@@ -9,23 +9,23 @@ If the introduction is left empty, the LLM generates one based on the archetype.
 from __future__ import annotations
 
 import asyncio
+import json
+import os
 import re
+from string import Template
 from collections import deque
 from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
-from typing import Any, Dict, List, Optional
+from typing import List, Optional
 
 import discord
 from discord import app_commands
 
-from src.agents.daily_reporter.storage import DailyDigestStore
-from src.agents.quiz_master.scoring import GeminiLLM
-from src.core import config as core_config
-from src.core.agent_base import BaseAgent
-
 from src.agents.lab_onboarder.config import LabOnboarderConfig, load_config
 from src.agents.lab_onboarder.storage import ProfileRecord, ProfileStore
+from src.core.agent_base import BaseAgent
+from src.core.llm import GeminiLLM
 
 
 # 8 Archetypes for AGI Lab members
@@ -51,20 +51,79 @@ ARCHETYPE_DESCRIPTIONS = {
     "Strategist": "戦略を立てる人（プロダクト、マーケット）",
 }
 
-# Keywords for channel recommendations based on archetype
-ARCHETYPE_KEYWORDS = {
-    "Builder": ["build", "dev", "tools", "prototype"],
-    "Researcher": ["research", "paper", "analysis"],
-    "Operator": ["ops", "workflow", "automation"],
-    "Curator": ["news", "summary", "tools"],
-    "Connector": ["community", "event", "collab"],
-    "Critic": ["debate", "review", "risk"],
-    "Creative": ["design", "art", "story"],
-    "Strategist": ["product", "market", "strategy"],
-}
+# Channel recommendation settings
+RECOMMEND_CATEGORY_IDS = {1432556670265065492, 1460853093183918266}  # 対象カテゴリ
+RECOMMEND_EXCLUDE_IDS = {1459775765251100864, 1457539123182043259, 1460853359358775308}  # 除外
 
-RECOMMENDATION_DAYS = 14
-RECOMMENDATION_MAX = 5
+# Fallback channels when LLM fails
+FALLBACK_FIXED_CHANNEL_IDS = [
+    1463831147392925697,  # ☕ なんでも雑談
+    1436182005762097243,  # 🔧 ツールカテゴリの代表チャンネル
+    842348486234341407,   # 📰 AIビッグニュース
+]
+TOOLS_CATEGORY_ID = 1460853093183918266  # Toolsカテゴリ
+
+# Discord snowflake epoch (2015-01-01 00:00:00 UTC in ms)
+DISCORD_EPOCH_MS = 1420070400000
+ACTIVITY_THRESHOLD_DAYS = 14  # 2週間以内をアクティブとみなす
+
+# Webhook settings for ラボちゃん persona
+LABCHAN_WEBHOOK_NAME = "LabOnboarder Webhook"
+LABCHAN_DISPLAY_NAME = "ラボちゃん（研究生）"
+# Use the same avatar as daily_reporter
+LABCHAN_AVATAR_PATH = os.path.join(
+    os.path.dirname(__file__), "..", "daily_reporter", "assets", "lab-chan.jpeg"
+)
+
+# LLM prompt for channel recommendations
+CHANNEL_RECOMMENDATION_PROMPT = """
+あなたは「ラボちゃん」です。AGIラボDiscordの元気な案内役として、新メンバーにチャンネルを推薦します。
+
+## キャラクター設定
+- **性格**: 元気で親しみやすい、褒め上手
+- **語尾**: 「〜ですね！」「〜かも！」「〜ッス！」（元気な敬語）
+- **役割**: 新メンバーの興味に合わせてチャンネルを紹介する
+
+# メンバー情報
+表示名: $display_name
+タグ: $tags
+自己紹介: $introduction
+
+# 利用可能なチャンネル・スレッド一覧
+🟢 = 2週間以内にアクティブ、⚪ = 非アクティブ
+$channel_list
+
+# マッチングルール（重要度順）
+1. **ツール名マッチ**: 自己紹介に「Claude Code」「ChatGPT」「Cursor」等のツール名があれば、該当スレッドを最優先
+2. **興味マッチ**: 趣味・興味（開発、研究、動画生成、映画、漫画等）があれば関連スレッドを推薦
+3. **アクティビティ優先**: 基本的に🟢（アクティブ）を優先。ただしツール名が完全一致する場合は⚪でもOK
+
+# 推薦すべきもの
+- ツール別スレッド（Claude Code, Cursor, ChatGPT等）- 自己紹介にツール名があれば必須
+- トピック別スレッド（開発、研究×AI、動画生成等）
+- inputしたよ、AIビッグニュース（情報好きな人）
+- 雑談系（映画、漫画、ライフスタイル等の趣味があれば）
+
+# 推薦しないもの
+- welcome、自己紹介系（既にいる場所）
+- アナウンス、運営系（ユーザーが投稿する場所ではない）
+- ラボちゃんの部屋（見るだけ）
+
+# 出力形式（重要）
+以下のJSON形式で出力してください：
+{"summary": "ラボちゃんの口調で、ユーザーの興味に共感しながらチャンネルを紹介する一言（60文字以内）", "channels": [チャンネルIDの配列、8〜10個]}
+
+## summaryのルール
+- ラボちゃんの元気な口調で書く（「〜ですね！」「〜かも！」）
+- ユーザーの興味に共感する（「○○に興味あるんですね！」「○○使ってるんですね！」）
+- おすすめ感を出す（「ピッタリのチャンネルがありますよ！」「きっと楽しめるかも！」）
+- 「〜さんは」で始めない
+- 60文字以内
+
+## 出力例
+{"summary":"AIツール好きなんですね！Claude CodeやChatGPTの話で盛り上がれるチャンネルがありますよ！","channels":[123456789012345678,234567890123456789]}
+{"summary":"シンギュラリティに興味あるんですね！SF好きな仲間もいるので楽しめるかも！","channels":[123456789012345678,234567890123456789]}
+""".strip()
 
 # LLM prompt for generating introduction when user leaves it empty
 INTRO_GENERATION_PROMPT = """
@@ -99,13 +158,13 @@ class LabOnboarderAgent(BaseAgent):
     def __init__(self) -> None:
         self.config: LabOnboarderConfig = load_config()
         self.store = ProfileStore(self.config.sqlite_path)
-        self._digest_store = DailyDigestStore(Path("data/daily_reporter/digests.sqlite"))
         self._client: Optional[discord.Client] = None
         self._commands_registered = False
         self._debug = self.config.debug
         self._log_path = self.config.log_path
         self._log_queue: Optional[asyncio.Queue[str]] = None
         self._log_sender_task: Optional[asyncio.Task[None]] = None
+        self._processed_threads: set[int] = set()  # Prevent double processing
 
     @property
     def name(self) -> str:
@@ -205,6 +264,30 @@ class LabOnboarderAgent(BaseAgent):
                 lines: Optional[int] = None,
             ) -> None:
                 await self._handle_debug_logs(interaction, lines)
+
+            @client.tree.command(
+                name="lab_test_recommend",
+                description="（管理者用）チャンネル推薦をテスト",
+                guild=guild,
+            )
+            @app_commands.describe(
+                user="対象ユーザー（未指定なら自分）",
+                archetype="テスト用アーキタイプ（上書き）",
+                introduction="テスト用自己紹介（上書き）",
+                dry_run="Trueなら投稿せずプレビューのみ",
+                show_prompt="Trueならプロンプト全文を表示",
+            )
+            async def test_recommend_cmd(
+                interaction: discord.Interaction,
+                user: Optional[discord.Member] = None,
+                archetype: Optional[str] = None,
+                introduction: Optional[str] = None,
+                dry_run: bool = True,
+                show_prompt: bool = False,
+            ) -> None:
+                await self._handle_test_recommend(
+                    interaction, user, archetype, introduction, dry_run, show_prompt
+                )
 
             try:
                 await client.tree.sync(guild=guild)
@@ -469,107 +552,361 @@ class LabOnboarderAgent(BaseAgent):
         thread_id: Optional[int],
         card: ProfileCard,
     ) -> None:
+        self._log(f"[DEBUG] _post_channel_recommendations start thread_id={thread_id}")
+
         if thread_id is None:
+            self._log("[DEBUG] skipped: thread_id is None")
             return
         thread = await self._fetch_thread(thread_id)
         if thread is None:
+            self._log("[DEBUG] skipped: thread not found")
             return
 
-        digests = await self._ensure_digest_data()
-        if not digests:
-            self._log("recommendations skipped: no digests")
+        guild = self._client.get_guild(self.config.guild_id) if self._client else None
+        if not guild:
+            self._log("recommendations skipped: guild not found")
             return
 
-        archetype = card.archetype or "Curator"
-        keywords = ARCHETYPE_KEYWORDS.get(archetype, ARCHETYPE_KEYWORDS["Curator"])
-        channel_scores: Dict[int, float] = {}
-        channel_snippets: Dict[int, str] = {}
+        # Get user's tags from their profile thread
+        tags = []
+        if hasattr(thread, "applied_tags") and thread.applied_tags:
+            tags = [tag.name for tag in thread.applied_tags]
+        self._log(f"[DEBUG] tags from thread={tags}")
 
-        now = datetime.now(timezone.utc)
-        for digest in digests:
-            try:
-                created = datetime.fromisoformat(digest.created_at.replace("Z", "+00:00"))
-            except Exception:
-                created = now
-            days_ago = (now - created).days
-            recency_weight = 1.0 if days_ago <= 7 else 0.7
-            content_lower = digest.content.lower()
-            keyword_hits = sum(1 for kw in keywords if kw in content_lower)
-            score = (1 + keyword_hits) * recency_weight
-
-            for channel_id in digest.extracted_channels:
-                channel_scores[channel_id] = channel_scores.get(channel_id, 0.0) + score
-                if channel_id not in channel_snippets:
-                    snippet = _extract_channel_snippet(digest.content, channel_id)
-                    if snippet:
-                        channel_snippets[channel_id] = snippet
-
-        if not channel_scores:
-            self._log("recommendations skipped: no channel scores")
+        # Build channel and thread list
+        channel_list = await self._build_channel_thread_list(guild)
+        if not channel_list:
+            self._log("recommendations skipped: no channels found")
             return
+        self._log(f"[DEBUG] channel_list count={len(channel_list)}")
 
-        ranked = sorted(channel_scores.items(), key=lambda item: item[1], reverse=True)
-        top = ranked[: min(RECOMMENDATION_MAX, len(ranked))]
-        if not top:
-            return
+        # Build prompt
+        prompt = Template(CHANNEL_RECOMMENDATION_PROMPT).safe_substitute(
+            display_name=card.display_name,
+            tags=", ".join(tags) if tags else "なし",
+            introduction=card.introduction,
+            channel_list="\n".join(channel_list),
+        )
+        self._log(f"[DEBUG] prompt length={len(prompt)} chars")
 
-        lines = [
-            "📌 **おすすめチャンネル（過去14日の日報ベース）**",
-            f"対象: <@{user.id}> / タイプ={archetype}",
-        ]
-        for idx, (channel_id, _) in enumerate(top, start=1):
-            mention = f"<#{channel_id}>"
-            snippet = channel_snippets.get(channel_id, "")
-            if snippet:
-                lines.append(f"{idx}. {mention} — {snippet}")
+        summary: Optional[str] = None
+        is_fallback = False
+
+        try:
+            llm = GeminiLLM(model=self.config.llm_model)
+            self._log(f"[DEBUG] calling LLM model={self.config.llm_model}")
+            result = await llm.generate(prompt, max_output_tokens=2048)
+            finish_reason = result.raw.get("finish_reason") if isinstance(result.raw, dict) else None
+            self._log(f"[DEBUG] LLM raw response length={len(result.text)} chars, finish_reason={finish_reason}")
+            self._log(f"[DEBUG] LLM raw response: {result.text[:500]}")
+            summary, recommended_ids = _parse_recommendation_response(result.text)
+            self._log(f"[DEBUG] parsed summary={summary[:50] if summary else None} IDs count={len(recommended_ids)}")
+        except Exception as exc:
+            self._log(f"channel recommendation LLM failed: {exc}, using fallback")
+            recommended_ids = await self._get_fallback_channels(guild)
+            is_fallback = True
+
+        if not recommended_ids:
+            self._log("LLM returned empty list, using fallback")
+            recommended_ids = await self._get_fallback_channels(guild)
+            is_fallback = True
+
+        # Filter out invalid channel IDs (ones that don't exist in guild)
+        valid_ids: List[int] = []
+        invalid_ids: List[int] = []
+        for rid in recommended_ids[:10]:
+            ch = guild.get_channel(rid) or guild.get_thread(rid)
+            if ch:
+                valid_ids.append(rid)
             else:
-                lines.append(f"{idx}. {mention}")
+                invalid_ids.append(rid)
+        self._log(f"[DEBUG] valid_ids={len(valid_ids)} invalid_ids={len(invalid_ids)} invalid={invalid_ids}")
 
+        if not valid_ids and not is_fallback:
+            self._log("no valid channel IDs from LLM, using fallback")
+            recommended_ids = await self._get_fallback_channels(guild)
+            is_fallback = True
+            valid_ids = []
+            invalid_ids = []
+            for rid in recommended_ids[:10]:
+                ch = guild.get_channel(rid) or guild.get_thread(rid)
+                if ch:
+                    valid_ids.append(rid)
+                else:
+                    invalid_ids.append(rid)
+            self._log(
+                f"[DEBUG] fallback valid_ids={len(valid_ids)} invalid_ids={len(invalid_ids)} invalid={invalid_ids}"
+            )
+
+        if not valid_ids:
+            self._log("recommendations skipped: no valid channel IDs even with fallback")
+            return
+
+        # Post recommendations with summary if available
+        lines = [
+            f"💡 **{user.mention}さんへのおすすめチャンネル**",
+            "自己紹介から、あなたに合いそうなチャンネルをピックアップしました！",
+            "",
+        ]
+
+        # Add summary if available (not for fallback)
+        if summary and not is_fallback:
+            lines.append(f"_{summary}_")
+            lines.append("")
+
+        lines.append("📌 **おすすめ**")
+        for idx, rid in enumerate(valid_ids, start=1):
+            lines.append(f"{idx}. <#{rid}>")
+
+        self._log(f"[DEBUG] posting {len(valid_ids)} recommendations to thread={thread_id}")
+
+        # Try to post via webhook (ラボちゃん persona)
+        posted = False
+        if thread.parent and isinstance(thread.parent, discord.ForumChannel):
+            webhook = await self._get_or_create_webhook(thread.parent)
+            if webhook:
+                try:
+                    await webhook.send(
+                        "\n".join(lines),
+                        username=LABCHAN_DISPLAY_NAME,
+                        thread=thread,
+                    )
+                    self._log(f"[DEBUG] webhook post success thread={thread_id}")
+                    posted = True
+                except Exception as exc:
+                    self._log(f"webhook post failed: {exc}, falling back to direct send")
+
+        # Fallback to direct send if webhook fails
+        if not posted:
+            try:
+                await thread.send("\n".join(lines))
+                self._log(f"[DEBUG] direct post success thread={thread_id}")
+            except Exception as exc:
+                self._log(f"recommendations post failed user={user.id} err={exc}")
+
+    def _is_recently_active(self, snowflake_id: int | None) -> bool:
+        """Check if a snowflake ID (message/thread) is from the last N days."""
+        if not snowflake_id:
+            return False
+        timestamp_ms = (snowflake_id >> 22) + DISCORD_EPOCH_MS
+        last_active = datetime.fromtimestamp(timestamp_ms / 1000, tz=timezone.utc)
+        threshold = datetime.now(tz=timezone.utc) - timedelta(days=ACTIVITY_THRESHOLD_DAYS)
+        return last_active > threshold
+
+    async def _get_fallback_channels(self, guild: discord.Guild) -> List[int]:
+        """Get fallback channel IDs when LLM fails."""
+        fallback_ids = list(FALLBACK_FIXED_CHANNEL_IDS)
+
+        # Get active channels from Tools category (top 3)
+        tools_channels: List[tuple[int, int]] = []
+        for ch in guild.channels:
+            if ch.category and ch.category.id == TOOLS_CATEGORY_ID:
+                if isinstance(ch, discord.TextChannel):
+                    last_msg_id = ch.last_message_id
+                    if last_msg_id and self._is_recently_active(last_msg_id):
+                        tools_channels.append((ch.id, last_msg_id))
+                elif isinstance(ch, discord.ForumChannel):
+                    # For forum, check active threads
+                    for t in ch.threads:
+                        last_msg_id = t.last_message_id
+                        if last_msg_id and self._is_recently_active(last_msg_id):
+                            tools_channels.append((t.id, last_msg_id))
+                            break  # One active thread per forum is enough
+
+        # Sort by last_message_id (newer first) and take top 3
+        tools_channels.sort(key=lambda x: x[1], reverse=True)
+        for ch_id, _ in tools_channels[:3]:
+            if ch_id not in fallback_ids:
+                fallback_ids.append(ch_id)
+
+        return fallback_ids
+
+    async def _get_or_create_webhook(
+        self, channel: discord.ForumChannel
+    ) -> Optional[discord.Webhook]:
+        """Get or create a webhook for ラボちゃん persona."""
         try:
-            await thread.send("\n".join(lines))
+            webhooks = await channel.webhooks()
+            webhook = None
+            for wh in webhooks:
+                if wh.name == LABCHAN_WEBHOOK_NAME:
+                    webhook = wh
+                    break
+
+            if not webhook:
+                webhook = await channel.create_webhook(name=LABCHAN_WEBHOOK_NAME)
+                self._log(f"[DEBUG] created webhook for forum channel={channel.id}")
+
+            # Update avatar if file exists
+            if os.path.exists(LABCHAN_AVATAR_PATH):
+                try:
+                    with open(LABCHAN_AVATAR_PATH, "rb") as f:
+                        avatar_bytes = f.read()
+                    await webhook.edit(avatar=avatar_bytes)
+                    self._log("[DEBUG] webhook avatar updated")
+                except Exception as e:
+                    self._log(f"[DEBUG] webhook avatar update failed: {e}")
+
+            return webhook
         except Exception as exc:
-            self._log(f"recommendations post failed user={user.id} err={exc}")
+            self._log(f"webhook creation failed: {exc}")
+            return None
 
-    async def _ensure_digest_data(self) -> List[Any]:
-        digests = self._digest_store.get_recent_digests(RECOMMENDATION_DAYS)
-        if digests:
-            return digests
+    async def _build_channel_thread_list(
+        self, guild: discord.Guild, max_items: int = 100
+    ) -> List[str]:
+        """Build a list of channels and threads for LLM recommendation."""
+        items = []
+        active_threads = []
+        inactive_threads = []
 
-        channel_id = core_config.TARGET_CHANNEL_ID
-        if not channel_id:
-            self._log("recommendations backfill skipped: DISCORD_CHANNEL_ID not set")
-            return []
+        for ch in guild.channels:
+            # Skip if not in allowed categories or in exclude list
+            category_id = ch.category.id if ch.category else None
+            if category_id not in RECOMMEND_CATEGORY_IDS:
+                continue
+            if ch.id in RECOMMEND_EXCLUDE_IDS:
+                continue
 
-        channel = await self._fetch_text_channel(int(channel_id))
-        if channel is None:
-            self._log("recommendations backfill skipped: channel not found")
-            return []
+            if isinstance(ch, discord.TextChannel):
+                category = ch.category.name if ch.category else "なし"
+                is_active = self._is_recently_active(ch.last_message_id)
+                status = "🟢" if is_active else "⚪"
+                items.append(f"ID:{ch.id} {status} 名前:{ch.name} カテゴリ:{category}")
 
-        threshold = datetime.now(timezone.utc) - timedelta(days=RECOMMENDATION_DAYS)
+            elif isinstance(ch, discord.ForumChannel):
+                # Get threads: cached active + archived
+                try:
+                    seen_ids = set()
+                    # Active threads (cached)
+                    for t in ch.threads:
+                        if t.id not in seen_ids:
+                            seen_ids.add(t.id)
+                            is_active = self._is_recently_active(t.last_message_id)
+                            entry = f"ID:{t.id} 名前:{t.name} 親:{ch.name}"
+                            if is_active:
+                                active_threads.append(f"{entry} 🟢")
+                            else:
+                                inactive_threads.append(f"{entry} ⚪")
+
+                    # Archived threads (fetch up to 20 per forum)
+                    async for t in ch.archived_threads(limit=20):
+                        if t.id not in seen_ids:
+                            seen_ids.add(t.id)
+                            is_active = self._is_recently_active(t.last_message_id)
+                            entry = f"ID:{t.id} 名前:{t.name} 親:{ch.name}"
+                            if is_active:
+                                active_threads.append(f"{entry} 🟢")
+                            else:
+                                inactive_threads.append(f"{entry} ⚪")
+                except Exception as e:
+                    self._log(f"thread fetch error for {ch.name}: {e}")
+
+        # Order: active threads > inactive threads > channels
+        result = active_threads + inactive_threads[:20] + items
+        return result[:max_items]
+
+    async def _find_user_profile_in_forum(
+        self, user_id: int
+    ) -> Optional[tuple[discord.Thread, str, List[str]]]:
+        """
+        Find a user's profile thread in the profile forum.
+        Returns (thread, introduction_content, tags) or None if not found.
+        """
+        if not self._client:
+            return None
+
+        guild = self._client.get_guild(self.config.guild_id)
+        if not guild:
+            return None
+
+        forum = guild.get_channel(self.config.profile_forum_channel_id)
+        if not isinstance(forum, discord.ForumChannel):
+            return None
+
+        # Search in active threads
+        for thread in forum.threads:
+            if thread.owner_id == user_id:
+                try:
+                    starter = thread.starter_message or await thread.fetch_message(thread.id)
+                    if starter and starter.content:
+                        tags = [tag.name for tag in thread.applied_tags] if thread.applied_tags else []
+                        return (thread, starter.content, tags)
+                except Exception:
+                    pass
+
+        # Search in archived threads
         try:
-            async for msg in channel.history(after=threshold, limit=None):
-                if not getattr(msg, "webhook_id", None) and not msg.author.bot:
-                    continue
-                if "📅 **今日のラボ日誌**" not in (msg.content or ""):
-                    continue
-                channel_ids = _extract_channel_ids(msg.content)
-                created_at = (
-                    msg.created_at.isoformat()
-                    if getattr(msg, "created_at", None)
-                    else datetime.now(timezone.utc).isoformat()
-                )
-                self._digest_store.upsert_digest(
-                    message_id=msg.id,
-                    channel_id=channel.id,
-                    created_at=created_at,
-                    content=msg.content,
-                    extracted_channels=channel_ids,
-                )
-        except Exception as exc:
-            self._log(f"recommendations backfill failed err={exc}")
-            return []
+            async for thread in forum.archived_threads(limit=50):
+                if thread.owner_id == user_id:
+                    try:
+                        starter = await thread.fetch_message(thread.id)
+                        if starter and starter.content:
+                            tags = [tag.name for tag in thread.applied_tags] if thread.applied_tags else []
+                            return (thread, starter.content, tags)
+                    except Exception:
+                        pass
+        except Exception:
+            pass
 
-        return self._digest_store.get_recent_digests(RECOMMENDATION_DAYS)
+        return None
+
+    async def on_thread_create(self, thread: discord.Thread) -> None:
+        """Handle thread creation in the profile forum."""
+        self._log(f"[DEBUG] on_thread_create called thread={thread.id} parent={thread.parent_id}")
+
+        # Only handle threads in the profile forum
+        if thread.parent_id != self.config.profile_forum_channel_id:
+            self._log(f"[DEBUG] skipped: parent_id mismatch (expected={self.config.profile_forum_channel_id})")
+            return
+
+        # Ignore threads created by the bot itself (already processed via /onboard)
+        if self._client and thread.owner_id == self._client.user.id:
+            self._log("[DEBUG] skipped: bot's own thread")
+            return
+
+        # Prevent double processing (Discord may fire event multiple times)
+        if thread.id in self._processed_threads:
+            self._log(f"[DEBUG] skipped: already processed thread={thread.id}")
+            return
+        self._processed_threads.add(thread.id)
+        self._log(f"[DEBUG] added to processed set, size={len(self._processed_threads)}")
+
+        self._log(f"thread_create detected thread={thread.id} owner={thread.owner_id}")
+
+        # Get the starter message
+        try:
+            starter = thread.starter_message or await thread.fetch_message(thread.id)
+            self._log(f"[DEBUG] starter message fetched, has_content={bool(starter and starter.content)}")
+        except Exception as exc:
+            self._log(f"thread_create fetch starter failed: {exc}")
+            return
+
+        if not starter or not starter.content:
+            self._log("thread_create skipped: no starter content")
+            return
+
+        # Get tags from thread
+        tags = []
+        if hasattr(thread, "applied_tags") and thread.applied_tags:
+            tags = [tag.name for tag in thread.applied_tags]
+        self._log(f"[DEBUG] thread tags={tags}")
+
+        # Build a simple profile card for recommendations
+        card = ProfileCard(
+            display_name=thread.owner.display_name if thread.owner else thread.name,
+            introduction=starter.content,
+            archetype="Curator",  # Default archetype
+            x_profile_url=None,
+        )
+        self._log(f"[DEBUG] calling _post_channel_recommendations for thread={thread.id}")
+
+        await self._post_channel_recommendations(
+            thread.owner or starter.author,
+            thread.id,
+            card,
+        )
+        self._log(f"[DEBUG] _post_channel_recommendations completed for thread={thread.id}")
 
     async def _handle_debug_dm(
         self,
@@ -744,6 +1081,245 @@ class LabOnboarderAgent(BaseAgent):
             interaction,
             f"```\n{content}\n```",
             ephemeral=True,
+        )
+
+    async def _handle_test_recommend(
+        self,
+        interaction: discord.Interaction,
+        target: Optional[discord.Member],
+        archetype_override: Optional[str],
+        introduction_override: Optional[str],
+        dry_run: bool,
+        show_prompt: bool,
+    ) -> None:
+        """Test channel recommendations with various options."""
+        if not await self._check_admin(interaction):
+            await self._send_interaction_message(
+                interaction,
+                "このコマンドを使う権限がありません。",
+                ephemeral=True,
+            )
+            return
+
+        await self._defer(interaction)
+
+        member = target or interaction.user
+        if not isinstance(member, (discord.Member, discord.User)):
+            await self._send_followup(
+                interaction,
+                "対象ユーザーが見つかりません。",
+                ephemeral=True,
+            )
+            return
+
+        # Get profile: DB first, then forum fallback
+        record = self.store.get_profile(member.id)
+        tags = []
+
+        if record and record.introduction:
+            # Found in DB
+            display_name = record.display_name
+            archetype = archetype_override or record.archetype or "Curator"
+            introduction = introduction_override or record.introduction
+            thread_id = record.forum_thread_id
+            # Get tags from thread if available
+            if thread_id:
+                user_thread = await self._fetch_thread(thread_id)
+                if user_thread and hasattr(user_thread, "applied_tags") and user_thread.applied_tags:
+                    tags = [tag.name for tag in user_thread.applied_tags]
+        else:
+            # Not in DB, try to find in forum
+            forum_result = await self._find_user_profile_in_forum(member.id)
+            if forum_result:
+                thread, forum_intro, forum_tags = forum_result
+                display_name = member.display_name
+                archetype = archetype_override or "Curator"
+                introduction = introduction_override or forum_intro
+                thread_id = thread.id
+                tags = forum_tags
+                self._log(f"test_recommend found forum profile for user={member.id}")
+            else:
+                # Not found anywhere
+                display_name = member.display_name
+                archetype = archetype_override or "Curator"
+                introduction = introduction_override or "(プロフィール未作成)"
+                thread_id = None
+
+        # Validate archetype if overridden
+        if archetype_override:
+            normalized = _normalize_archetype(archetype_override)
+            if normalized:
+                archetype = normalized
+            else:
+                await self._send_followup(
+                    interaction,
+                    f"⚠️ 無効なarchetype: {archetype_override}\n有効: {', '.join(sorted(ARCHETYPES))}",
+                    ephemeral=True,
+                )
+                return
+
+        # Build channel list
+        guild = self._client.get_guild(self.config.guild_id) if self._client else None
+        if not guild:
+            await self._send_followup(
+                interaction, "⚠️ ギルドが見つかりません。", ephemeral=True
+            )
+            return
+
+        # Build channel and thread list (tags already fetched above)
+        channel_list = await self._build_channel_thread_list(guild)
+        if not channel_list:
+            await self._send_followup(
+                interaction, "⚠️ チャンネルが見つかりません。", ephemeral=True
+            )
+            return
+
+        # Build prompt
+        prompt = Template(CHANNEL_RECOMMENDATION_PROMPT).safe_substitute(
+            display_name=display_name,
+            tags=", ".join(tags) if tags else "なし",
+            introduction=introduction,
+            channel_list="\n".join(channel_list),
+        )
+
+        # Show prompt if requested (ephemeral only)
+        if show_prompt:
+            # Split long prompt for Discord
+            prompt_preview = prompt[:1800] + "..." if len(prompt) > 1800 else prompt
+            await self._send_followup(
+                interaction,
+                f"**📝 プロンプト（{len(channel_list)}チャンネル）:**\n```\n{prompt_preview}\n```",
+                ephemeral=True,
+            )
+
+        # Call LLM
+        try:
+            llm = GeminiLLM(model=self.config.llm_model)
+            result = await llm.generate(prompt, max_output_tokens=2048)
+            raw_response = result.text.strip()
+            summary, recommended_ids = _parse_recommendation_response(raw_response)
+        except Exception as exc:
+            await self._send_followup(
+                interaction,
+                f"⚠️ LLM呼び出しに失敗: {exc}",
+                ephemeral=True,
+            )
+            return
+
+        if not recommended_ids:
+            await self._send_followup(
+                interaction,
+                "⚠️ LLMが空の推薦を返しました。",
+                ephemeral=True,
+            )
+            return
+
+        # Build result message
+        lines = [
+            f"**🧪 チャンネル推薦テスト結果**",
+            f"対象: {member.mention} ({display_name})",
+            f"タグ: {', '.join(tags) if tags else 'なし'}",
+            f"自己紹介: {introduction[:100]}{'...' if len(introduction) > 100 else ''}",
+            "",
+        ]
+
+        # Show summary if available
+        if summary:
+            lines.append(f"**💭 概要:** _{summary}_")
+            lines.append("")
+
+        lines.append(f"**📌 推薦（{len(recommended_ids)}件）:**")
+        for idx, rid in enumerate(recommended_ids[:10], start=1):
+            # Check if channel or thread exists
+            ch = guild.get_channel(rid) or guild.get_thread(rid)
+            if ch:
+                lines.append(f"{idx}. <#{rid}> ✓")
+            else:
+                lines.append(f"{idx}. ID:{rid} ⚠️ (存在しない)")
+
+        lines.append("")
+        lines.append(f"**LLM生レスポンス:** \n```json\n{raw_response[:500]}\n```")
+
+        if dry_run:
+            lines.append("")
+            lines.append("📋 **ドライラン**: 投稿されていません")
+            await self._send_followup(
+                interaction,
+                "\n".join(lines),
+                ephemeral=True,
+            )
+        else:
+            # Actually post to the thread
+            if not thread_id:
+                lines.append("")
+                lines.append("⚠️ プロフィールスレッドがないため投稿できません")
+                await self._send_followup(
+                    interaction,
+                    "\n".join(lines),
+                    ephemeral=True,
+                )
+                return
+
+            thread = await self._fetch_thread(thread_id)
+            if not thread:
+                lines.append("")
+                lines.append(f"⚠️ スレッド(ID:{thread_id})が見つかりません")
+                await self._send_followup(
+                    interaction,
+                    "\n".join(lines),
+                    ephemeral=True,
+                )
+                return
+
+            # Build post content (same format as _post_channel_recommendations)
+            post_lines = [
+                f"💡 **{member.mention}さんへのおすすめチャンネル**",
+                "自己紹介から、あなたに合いそうなチャンネルをピックアップしました！",
+                "",
+            ]
+            if summary:
+                post_lines.append(f"_{summary}_")
+                post_lines.append("")
+            post_lines.append("📌 **おすすめ**")
+            for idx, rid in enumerate(recommended_ids[:10], start=1):
+                post_lines.append(f"{idx}. <#{rid}>")
+
+            # Try to post via webhook (ラボちゃん persona)
+            posted = False
+            if thread.parent and isinstance(thread.parent, discord.ForumChannel):
+                webhook = await self._get_or_create_webhook(thread.parent)
+                if webhook:
+                    try:
+                        await webhook.send(
+                            "\n".join(post_lines),
+                            username=LABCHAN_DISPLAY_NAME,
+                            thread=thread,
+                        )
+                        lines.append("")
+                        lines.append(f"✅ ラボちゃんとして投稿しました: {thread.jump_url}")
+                        posted = True
+                    except Exception as exc:
+                        self._log(f"webhook post failed in test: {exc}")
+
+            # Fallback to direct send
+            if not posted:
+                try:
+                    await thread.send("\n".join(post_lines))
+                    lines.append("")
+                    lines.append(f"✅ スレッドに投稿しました: {thread.jump_url}")
+                except Exception as exc:
+                    lines.append("")
+                    lines.append(f"⚠️ 投稿に失敗: {exc}")
+
+            await self._send_followup(
+                interaction,
+                "\n".join(lines),
+                ephemeral=True,
+            )
+
+        self._log(
+            f"test_recommend user={member.id} tags={tags} "
+            f"dry_run={dry_run} recommended={recommended_ids[:10]}"
         )
 
     async def _send_welcome_dm(self, member: discord.User | discord.Member) -> None:
@@ -1190,6 +1766,69 @@ def _normalize_archetype(value: str) -> Optional[str]:
     return None
 
 
+def _strip_markdown_code_block(text: str) -> str:
+    """Strip markdown code block formatting from LLM response."""
+    text = text.strip()
+    # Remove ```json or ``` at start
+    if text.startswith("```json"):
+        text = text[7:]
+    elif text.startswith("```"):
+        text = text[3:]
+    # Remove ``` at end
+    if text.endswith("```"):
+        text = text[:-3]
+    return text.strip()
+
+
+def _parse_recommendation_response(text: str) -> tuple[Optional[str], List[int]]:
+    """Parse LLM response into (summary, channel_ids).
+
+    Handles two formats:
+    - New format: {"summary": "...", "channels": [id1, id2, ...]}
+    - Legacy format: [id1, id2, ...] (returns None for summary)
+    """
+    text = _strip_markdown_code_block(text)
+
+    try:
+        data = json.loads(text)
+    except json.JSONDecodeError:
+        # Fallback: extract IDs from malformed response
+        numbers = re.findall(r'\d{10,20}', text)
+        return None, [int(n) for n in numbers[:10]]
+
+    # New format: {"summary": ..., "channels": [...]}
+    if isinstance(data, dict):
+        summary = data.get("summary")
+        if isinstance(summary, str):
+            summary = summary.strip() or None
+        else:
+            summary = None
+
+        raw_ids = data.get("channels", [])
+        if not isinstance(raw_ids, list):
+            raw_ids = []
+
+        result = []
+        for item in raw_ids:
+            try:
+                result.append(int(item))
+            except (ValueError, TypeError):
+                continue
+        return summary, result
+
+    # Legacy format: [id1, id2, ...]
+    if isinstance(data, list):
+        result = []
+        for item in data:
+            try:
+                result.append(int(item))
+            except (ValueError, TypeError):
+                continue
+        return None, result
+
+    return None, []
+
+
 def _normalize_x_url(url: str) -> Optional[str]:
     """Normalize X/Twitter URL to https://x.com/handle format."""
     url = url.strip()
@@ -1222,35 +1861,6 @@ def _extract_x_handle(url: str) -> Optional[str]:
     if match:
         return match.group(1)
     return None
-
-
-def _extract_channel_ids(content: str) -> List[int]:
-    """Extract Discord channel IDs from message content."""
-    if not content:
-        return []
-    pattern = re.compile(r"https://discord\.com/channels/\d+/(\d+)/\d+")
-    ids: List[int] = []
-    for match in pattern.finditer(content):
-        try:
-            ids.append(int(match.group(1)))
-        except ValueError:
-            continue
-    return ids
-
-
-def _extract_channel_snippet(content: str, channel_id: int) -> str:
-    """Extract a snippet of content related to a channel."""
-    if not content:
-        return ""
-    token = f"/{channel_id}/"
-    for line in content.splitlines():
-        if token not in line:
-            continue
-        cleaned = re.sub(r"https://discord\.com/channels/\d+/\d+/\d+", "", line)
-        cleaned = cleaned.strip(" -•\t")
-        if cleaned:
-            return cleaned[:120]
-    return ""
 
 
 def _split_log_chunks(text: str, limit: int) -> List[str]:
