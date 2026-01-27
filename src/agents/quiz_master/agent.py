@@ -11,12 +11,12 @@ from typing import Dict, List, Optional, Tuple
 import discord
 
 from src.core.agent_base import BaseAgent
+from src.core.llm import ClaudeLLM, GeminiLLM
+
 from .config import QuizSpec, QuestionType
 from .storage import JsonStore, QuizSessionState, Submission, QuestionGrading
 from .utils import parse_quiz_command, normalize_choice, sha256_hex, deterministic_draw, clip
 from .scoring import (
-    GeminiLLM,
-    ClaudeLLM,
     score_creative_answers,
     score_knowledge_answers,
     comment_incorrect_answer,
