@@ -47,7 +47,7 @@ Maintain a single Continuity Ledger for this workspace in `CONTINUITY.md`. The l
 - Formatting is enforced with Black + isort; keep imports sorted and line length default.
 - Use type hints for public interfaces.
 - Naming: modules `snake_case`, classes `CapWords`, constants/env vars `UPPER_SNAKE`.
-- Agent-specific settings belong in `src/agents/<agent_name>/config.py`; secrets are loaded from `.env` via `src/core/config.py`.
+- Agent-specific settings belong in `src/agents/<agent_name>/config.py`; secrets are loaded from environment via `src/core/config.py`.
 
 ## Testing Guidelines
 - Test framework: `pytest`.
@@ -65,5 +65,15 @@ Maintain a single Continuity Ledger for this workspace in `CONTINUITY.md`. The l
 - Ensure agents can run in both long-running and `--once` modes.
 
 ## Security & Configuration Tips
-- Never commit `.env`; start from `.env.example` for local setup.
-- For scheduled runs, use GitHub Actions secrets (`DISCORD_TOKEN`, `GOOGLE_API_KEY`, etc.).
+- This repository is public OSS; assume anything committed is world-readable.
+- Store secrets outside the repo (GitHub Actions secrets, secret managers, or local environment variables).
+- Local-only files are intentionally ignored: `CONTINUITY.md`, `.claude/`, logs, and local data.
+
+## Project-wide Learnings (Operational)
+- LLM output shapes vary by provider/model; some return reasoning without content. Guard for empty content and disable reasoning when needed (`OPENROUTER_REASONING_EFFORT=none` or `OPENROUTER_EXCLUDE_REASONING=true`).
+- Discord message limit is strict; split responses at ~1900 chars and chunk single long lines to avoid silent failures.
+- Treat Discord search HTTP/timeout failures as errors (not “no results”) and return a single ERR_DISCORD_SEARCH message.
+- Avoid double rate-limit checks when routing (pass a flag after the first check).
+- Short-term context: record bot messages only when `*_CONTEXT_INCLUDE_BOTS=true`; treat replies to the bot as mentions; include reply context for continuity.
+- Ops: avoid running multiple bot instances (local + GCP) simultaneously; send debug logs to a log channel; prefer reaction emoji over “searching...” chatter.
+- CLI scripts: run with `PYTHONPATH=.` and source `.env` when they require API keys.
