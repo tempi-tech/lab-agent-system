@@ -31,8 +31,8 @@ Maintain a single Continuity Ledger for this workspace in `CONTINUITY.md`. The l
 ## Project Structure & Module Organization
 - `main.py` is the entry point; it builds the Discord client and registers agents.
 - `src/core/` holds platform code (Discord client wrapper, config loader, base agent class).
-- `src/agents/` contains plugin-style agents; each agent lives in its own folder with `__init__.py`, `config.py`, and logic modules (example: `src/agents/daily_reporter/`).
-- `scripts/` hosts one-off utilities; `docs/` and `data/` store reference material and assets.
+- `src/agents/` contains plugin-style agents; each agent typically has `__init__.py`, `config.py`, and logic modules (some agents use `agent.py` or omit `config.py`).
+- `scripts/` hosts one-off utilities; `docs/` and `data/` are local/internal (gitignored in OSS).
 
 ## Build, Test, and Development Commands
 - `pip install .` installs runtime dependencies from `pyproject.toml`.
@@ -42,6 +42,7 @@ Maintain a single Continuity Ledger for this workspace in `CONTINUITY.md`. The l
 - `black src scripts && isort src scripts` formats Python code.
 - `mypy src` runs static type checks.
 - `pytest` runs the test suite (add tests as you introduce them).
+- Dev tools may not be installed by `pip install .`; install them separately (e.g., `uv sync --dev`).
 
 ## Coding Style & Naming Conventions
 - Formatting is enforced with Black + isort; keep imports sorted and line length default.
@@ -61,19 +62,17 @@ Maintain a single Continuity Ledger for this workspace in `CONTINUITY.md`. The l
 
 ## Agent Development Notes
 - All agents must inherit from `BaseAgent` (`src/core/agent_base.py`).
-- Export a `get_agent()` in each agent’s `__init__.py` and register the agent in `main.py`.
+- Prefer exporting a `get_agent()` in each agent’s `__init__.py` and register via `main.py` (some legacy agents are instantiated directly).
 - Ensure agents can run in both long-running and `--once` modes.
 
 ## Security & Configuration Tips
 - This repository is public OSS; assume anything committed is world-readable.
 - Store secrets outside the repo (GitHub Actions secrets, secret managers, or local environment variables).
-- Local-only files are intentionally ignored: `CONTINUITY.md`, `.claude/`, logs, and local data.
+- Local-only files are intentionally ignored: `CONTINUITY.md`, `.claude/`, logs, `docs/`, and `data/`.
 
-## Project-wide Learnings (Operational)
-- LLM output shapes vary by provider/model; some return reasoning without content. Guard for empty content and disable reasoning when needed (`OPENROUTER_REASONING_EFFORT=none` or `OPENROUTER_EXCLUDE_REASONING=true`).
-- Discord message limit is strict; split responses at ~1900 chars and chunk single long lines to avoid silent failures.
-- Treat Discord search HTTP/timeout failures as errors (not “no results”) and return a single ERR_DISCORD_SEARCH message.
-- Avoid double rate-limit checks when routing (pass a flag after the first check).
-- Short-term context: record bot messages only when `*_CONTEXT_INCLUDE_BOTS=true`; treat replies to the bot as mentions; include reply context for continuity.
-- Ops: avoid running multiple bot instances (local + GCP) simultaneously; send debug logs to a log channel; prefer reaction emoji over “searching...” chatter.
-- CLI scripts: run with `PYTHONPATH=.` and source `.env` when they require API keys.
+## Project-specific Gotchas
+- OpenRouter: some models return reasoning without content; disable reasoning when needed (`OPENROUTER_REASONING_EFFORT=none` or `OPENROUTER_EXCLUDE_REASONING=true`).
+- Discord: 2000-char limit; split responses around ~1900 chars and chunk single long lines.
+- Discord search: treat 429/4xx/5xx and timeouts as ERR_DISCORD_SEARCH, not “no results”.
+- CLI scripts: run with `PYTHONPATH=.` and source `.env` when API keys are required.
+- Some scripts need extra env vars not in `.env.example`; check each script’s header/usage.
