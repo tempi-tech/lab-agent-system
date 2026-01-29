@@ -33,6 +33,15 @@ AGIラボ / ChatGPT研究所 のコミュニティ運営で実際に使ってい
 
 <img width="989" height="497" alt="image" src="https://github.com/user-attachments/assets/23ee8dd0-92d8-4523-8442-b8774c406067" />
 
+### 2. Claude Search（Discord検索 + 速答え）
+
+- **役割**  
+  サーバー内メッセージを Discord 検索 API で取得し、  
+  `!csearch` で検索結果、`!cask` で回答（OpenRouter 経由の LLM）を返します。
+
+- **実装場所**  
+  `src/agents/claude_search/`
+
 
 ---
 
@@ -41,6 +50,7 @@ AGIラボ / ChatGPT研究所 のコミュニティ運営で実際に使ってい
 - Python 3.10 以上
 - Discord Bot Token
 - Google Gemini API キー
+- Anthropic API キー（Claude Agent SDK を使う場合）
 
 ---
 

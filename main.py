@@ -12,6 +12,7 @@ from src.agents.operator import get_agent as get_operator
 from src.agents.lab_onboarder import get_agent as get_lab_onboarder
 from src.agents.membership_checker import get_agent as get_membership_checker
 from src.agents.updates_assistant import get_agent as get_updates_assistant
+from src.agents.claude_search import get_agent as get_claude_search
 
 # Load environment variables
 load_dotenv()
@@ -49,6 +50,7 @@ def main():
 
     if not run_once:
         enable_updates = os.getenv("UPDATES_ASSISTANT_ENABLED", "1").strip().lower() not in {"0", "false", "no"}
+        enable_claude_search = os.getenv("CLAUDE_SEARCH_ENABLED", "1").strip().lower() not in {"0", "false", "no"}
         quiz_master = get_quiz_master()
         client.register_agent(quiz_master)
 
@@ -58,6 +60,8 @@ def main():
         client.register_agent(get_membership_checker())
         if enable_updates:
             client.register_agent(get_updates_assistant())
+        if enable_claude_search:
+            client.register_agent(get_claude_search())
 
     # Run Bot
     token = config.DISCORD_TOKEN

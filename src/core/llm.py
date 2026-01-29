@@ -12,7 +12,7 @@ import json
 import os
 import re
 from dataclasses import dataclass
-from typing import Any, Optional
+from typing import Any, Optional, Protocol
 
 import httpx
 
@@ -46,6 +46,11 @@ def safe_json_loads(text: str) -> Any:
 class LLMResult:
     text: str
     raw: Any = None
+
+
+class LLMClient(Protocol):
+    async def generate(self, prompt: str, *, temperature: float = 0.0, max_output_tokens: int = 2048) -> LLMResult:
+        ...
 
 
 class GeminiLLM:
@@ -148,3 +153,78 @@ class ClaudeLLM:
         if content and isinstance(content, list):
             text = content[0].get("text", "") if isinstance(content[0], dict) else ""
         return LLMResult(text=text, raw=data)
+
+
+class OpenRouterLLM:
+    """Thin wrapper around OpenRouter (OpenAI-compatible) chat completions."""
+
+    def __init__(self, model: Optional[str] = None):
+        self.model = model or os.getenv("OPENROUTER_DEFAULT_MODEL", "deepseek/deepseek-chat")
+        self.api_key = os.getenv("OPENROUTER_API_KEY", "")
+        self.base_url = os.getenv("OPENROUTER_BASE_URL", "https://openrouter.ai/api/v1").rstrip("/")
+        self.app_url = os.getenv("OPENROUTER_APP_URL", "").strip()
+        self.app_name = os.getenv("OPENROUTER_APP_NAME", "lab-agent-system").strip()
+        self.exclude_reasoning = os.getenv("OPENROUTER_EXCLUDE_REASONING", "false").strip().lower() in {
+            "1",
+            "true",
+            "yes",
+        }
+        self.reasoning_effort = os.getenv("OPENROUTER_REASONING_EFFORT", "").strip().lower()
+
+    async def generate(self, prompt: str, *, temperature: float = 0.2, max_output_tokens: int = 1024) -> LLMResult:
+        return await asyncio.to_thread(
+            self._generate_sync,
+            prompt,
+            temperature=temperature,
+            max_output_tokens=max_output_tokens,
+        )
+
+    def _generate_sync(self, prompt: str, *, temperature: float = 0.2, max_output_tokens: int = 1024) -> LLMResult:
+        if not self.api_key:
+            raise RuntimeError("OPENROUTER_API_KEY is not set.")
+
+        payload = {
+            "model": self.model,
+            "temperature": temperature,
+            "max_tokens": max_output_tokens,
+            "messages": [{"role": "user", "content": prompt}],
+        }
+        if self.reasoning_effort:
+            payload["reasoning"] = {"effort": self.reasoning_effort}
+        elif self.exclude_reasoning:
+            payload["reasoning"] = {"exclude": True}
+
+        headers = {
+            "authorization": f"Bearer {self.api_key}",
+            "content-type": "application/json",
+        }
+        if self.app_url:
+            headers["http-referer"] = self.app_url
+        if self.app_name:
+            headers["x-title"] = self.app_name
+
+        with httpx.Client(timeout=60) as client:
+            resp = client.post(f"{self.base_url}/chat/completions", headers=headers, json=payload)
+            resp.raise_for_status()
+            data = resp.json()
+
+        choices = data.get("choices") or []
+        content = ""
+        if choices and isinstance(choices, list):
+            message = choices[0].get("message") if isinstance(choices[0], dict) else None
+            if isinstance(message, dict):
+                content = message.get("content", "") or ""
+        return LLMResult(text=content, raw=data)
+
+
+def get_llm_client(provider: str, model: Optional[str] = None) -> LLMClient:
+    normalized = (provider or "").strip().lower()
+    if not normalized:
+        normalized = "openrouter"
+    if normalized in {"openrouter", "router"}:
+        return OpenRouterLLM(model=model)
+    if normalized in {"anthropic", "claude"}:
+        return ClaudeLLM(model=model)
+    if normalized in {"google", "gemini"}:
+        return GeminiLLM(model=model)
+    raise ValueError(f"Unsupported LLM provider: {provider}")
