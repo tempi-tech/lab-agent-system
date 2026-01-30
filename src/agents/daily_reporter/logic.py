@@ -12,6 +12,7 @@ from src.core import config as core_config
 
 from src.core.agent_base import BaseAgent
 from src.agents.daily_reporter.storage import DailyDigestStore
+from src.agents.daily_reporter import radio
 
 DISCORD_URL_PREFIX = "https://discord.com/"
 URL_PATTERN = re.compile(r"https?://\S+")
@@ -202,6 +203,28 @@ class DailyReporterAgent(BaseAgent):
 
         return messages
 
+    def resolve_source_channels(self) -> list[discord.abc.GuildChannel]:
+        source_ids = set(config.SOURCE_CHANNELS)
+        for category_id in config.SOURCE_CATEGORY_IDS:
+            category = self.client.get_channel(category_id)
+            if isinstance(category, discord.CategoryChannel):
+                for channel in category.channels:
+                    if isinstance(channel, (discord.TextChannel, discord.ForumChannel)):
+                        source_ids.add(channel.id)
+            else:
+                print(f"Warning: Category {category_id} not found or not a category.")
+
+        source_ids -= config.SOURCE_CHANNEL_EXCLUDE_IDS
+
+        channels: list[discord.abc.GuildChannel] = []
+        for channel_id in sorted(source_ids):
+            channel = self.client.get_channel(channel_id)
+            if channel:
+                channels.append(channel)
+            else:
+                print(f"Warning: Could not find channel {channel_id}")
+        return channels
+
     def format_tips_for_thread(self, raw_tips: str) -> str:
         """TipsScoutの出力を読みやすいカード形式に整形"""
         if not raw_tips or raw_tips.strip() == "なし":
@@ -298,6 +321,22 @@ class DailyReporterAgent(BaseAgent):
         except Exception as e:
             print(f"Failed to post audio: {e}")
 
+    async def post_audio(self, webhook: discord.Webhook, audio_path: Path) -> None:
+        if not audio_path.exists():
+            print(f"Audio file not found: {audio_path}")
+            return
+
+        try:
+            await webhook.send(
+                content="🔊 デイリーダイジェスト音声はこちらッス！",
+                file=discord.File(str(audio_path), filename=audio_path.name),
+                username=config.REPORTER_NAME,
+            )
+            print(f"Audio posted: {audio_path.name}")
+        except Exception as e:
+            print(f"Failed to post audio: {e}")
+
+
     async def generate_summary(self, target_channel):
         # 1. Calculate Time Threshold (24 hours ago in JST)
         now_utc = datetime.now(timezone.utc)
@@ -309,12 +348,8 @@ class DailyReporterAgent(BaseAgent):
         candidates_for_mvp = []
         candidates_for_highlight = []
 
-        for channel_id in config.SOURCE_CHANNELS:
-            channel = self.client.get_channel(channel_id)
-            if not channel:
-                print(f"Warning: Could not find channel {channel_id}")
-                continue
-            
+        source_channels = self.resolve_source_channels()
+        for channel in source_channels:
             msgs = await self.fetch_daily_messages(channel, threshold)
             all_messages.extend(msgs)
 
@@ -330,7 +365,10 @@ class DailyReporterAgent(BaseAgent):
                         is_admin = True
                         break
             
-            author_display = f"{msg.author.name}"
+            if isinstance(msg.author, discord.Member):
+                author_display = msg.author.display_name
+            else:
+                author_display = msg.author.name
             if is_admin:
                 author_display += " [Admin]"
             else:
@@ -351,29 +389,32 @@ class DailyReporterAgent(BaseAgent):
             )
 
         # 4. New Member Detection
-        new_members_list = []
-        if config.SOURCE_CHANNELS:
-            guild = self.client.get_channel(config.SOURCE_CHANNELS[0]).guild
+        new_member_mentions: list[str] = []
+        new_member_names: list[str] = []
+        if source_channels:
+            guild = source_channels[0].guild
             if guild:
                 print(f"Checking for new members in guild: {guild.name}")
                 for member in guild.members:
                     if member.joined_at and member.joined_at > threshold:
                         if not member.bot:
-                            new_members_list.append(f"<@{member.id}>")
+                            new_member_mentions.append(f"<@{member.id}>")
+                            new_member_names.append(member.display_name or member.name)
         else:
             print("Warning: No source channels configured. Skipping new member detection.")
         
-        new_members_str = " ".join(new_members_list) if new_members_list else "なし"
-        print(f"New members found: {new_members_str}")
+        new_member_mentions_str = " ".join(new_member_mentions) if new_member_mentions else "なし"
+        new_member_names_str = "、".join(new_member_names) if new_member_names else "なし"
+        print(f"New members found: {new_member_mentions_str}")
 
-        if not formatted_messages and not new_members_list:
+        if not formatted_messages and not new_member_mentions:
             await target_channel.send("今日は静かな一日でしたね。（メッセージも新メンバーもなし）")
             return
 
         history_text = "\n---\n".join(formatted_messages)
         
         print("Analyzing...")
-        await target_channel.send(f"🕵️‍♀️ ラボちゃんが {len(config.SOURCE_CHANNELS)} つのチャンネルを巡回して分析中... (今日のハイライトは！？)")
+        await target_channel.send(f"🕵️‍♀️ ラボちゃんが {len(source_channels)} つのチャンネルを巡回して分析中... (今日のハイライトは！？)")
 
         webhook = await self.get_or_create_webhook(target_channel)
 
@@ -390,6 +431,9 @@ class DailyReporterAgent(BaseAgent):
             - トピック数は会話の内容に応じて柔軟に（少ない日は1-2個、活発な日は5-10個）
             - 各トピックは**1行**で簡潔に
             - だらだら書くのは禁止
+            - 固有名詞・モデル名・バージョン名は**原文の表記を変更しない**
+            - 「本来は〜」「〜ではなく〜」などの訂正・推測は**書かない**
+            - 入力ログに無い情報は**絶対に追加しない**
             - URLは必ず `https://discord.com/` で始まるものだけを使う
             - メッセージ本文の外部URLは使わず、該当メッセージの `URL:` 行を参照する
             - URLは**空白や改行で分割しない**でそのまま出力する
@@ -415,6 +459,9 @@ class DailyReporterAgent(BaseAgent):
             - 「誰が言ったか」ではなく「何を言ったか」で選んでください。
             - 運営メンバー(Admin)の発言でも、内容が有益なら選んで構いません。
             - 単なる挨拶や連絡事項は避けてください。
+            - 入力ログに無い情報は**絶対に追加しない**
+            - 固有名詞・モデル名・バージョン名は**原文の表記を変更しない**
+            - 訂正・推測は**書かない**
 
             出力形式:
             Highlight: <発言内容の要約> (by <ユーザー名>)
@@ -440,6 +487,9 @@ class DailyReporterAgent(BaseAgent):
             - ツールの便利な使い方、設定、ショートカット
             - 新機能やアップデート情報
             - 生産性向上のハック
+            - 入力ログに無い情報は**絶対に追加しない**
+            - 固有名詞・モデル名・バージョン名は**原文の表記を変更しない**
+            - 訂正・推測は**書かない**
 
             **厳守ルール:**
             - チャット履歴に**実際に書かれている情報のみ**を抽出
@@ -490,10 +540,13 @@ class DailyReporterAgent(BaseAgent):
             【トピック】: {{topics_summary}}
             【ハイライト】: {{highlight_analysis}}
             【Tips情報】: {{tips_analysis}}
-            【新メンバー】: {{new_members}}
+            【新メンバー】: {{new_member_mentions}}
 
             ## 出力ルール
             - **スマホ1画面（10行以内）**に収まる超コンパクトなレポートにしてください。
+            - 入力ログに無い情報は**絶対に追加しない**
+            - 固有名詞・モデル名・バージョン名は**原文の表記を変更しない**
+            - 訂正・推測は**書かない**
             - ユーザーへの言及は `<@ユーザーID>` の形式を使ってメンションにしてください（入力のIDを使ってください）。
             - リンクはそのままURLを表示してください（Markdownリンク `[text](url)` はDiscordでプレビューされないことがあるため）。
             - `https://discord.com/` 以外のリンクは絶対に出力しないでください。
@@ -527,8 +580,56 @@ class DailyReporterAgent(BaseAgent):
             output_key=config.STATE_FINAL_REPORT
         )
 
+        knowledge_text = radio.load_radio_knowledge(Path(config.RADIO_KNOWLEDGE_PATH))
+        radio_writer = LlmAgent(
+            name="RadioScriptWriter",
+            model=config.GEMINI_MODEL,
+            instruction=f"""あなたはラジオ台本の作成者です。
+
+以下の情報を元に、2人の掛け合い台本をJSONで出力してください。
+
+## 入力情報
+【トピック】: {{topics_summary}}
+【ハイライト】: {{highlight_analysis}}
+【Tips情報】: {{tips_analysis}}
+            【新メンバー】: {{new_member_names}}
+
+## 制約
+- 掛け合いは「ラボちゃん」と「ユウキ」の2人のみ
+- 長さは約{config.RADIO_TARGET_MINUTES}分
+- トピック数は最大{config.RADIO_MAX_TOPICS}件まで
+- 口調・キャラ設定は下記のナレッジに従う
+- URLは読み上げない
+- Discordコミュニティ内の発言を正とし、訂正・推測・前置き（「本来は〜」等）を入れない
+- 入力ログに無い情報は**絶対に追加しない**
+- 固有名詞・モデル名・バージョン名は**原文の表記を変更しない**
+- JSONのみ出力（余計な説明は禁止）
+
+## ナレッジ
+{knowledge_text}
+
+## 出力JSONフォーマット
+{{
+  "title": "AGIラボ デイリーダイジェスト",
+  "sections": [
+    {{
+      "name": "opening",
+      "lines": [
+        {{"speaker": "ラボちゃん", "text": "..."}},
+        {{"speaker": "ユウキ", "text": "..."}}
+      ]
+    }}
+  ]
+}}
+""",
+            output_key=config.STATE_RADIO_SCRIPT,
+        )
+
         sub_agents = [topic_summarizer, tips_scout]
-        initial_state = {"new_members": new_members_str}
+        initial_state = {
+            "new_member_mentions": new_member_mentions_str,
+            "new_member_names": new_member_names_str,
+        }
 
         if candidates_for_highlight:
             sub_agents.append(highlight_scout)
@@ -547,7 +648,7 @@ class DailyReporterAgent(BaseAgent):
 
         summary_coordinator = SequentialAgent(
             name="SummaryCoordinator",
-            sub_agents=[analysis_phase, editor_in_chief],
+            sub_agents=[analysis_phase, editor_in_chief, radio_writer],
             description="Orchestrates the daily summary generation."
         )
 
@@ -559,7 +660,7 @@ class DailyReporterAgent(BaseAgent):
         以下のチャット履歴を分析してレポートを作成してください：
         
         【新メンバー情報】
-        {new_members_str}
+        {new_member_names_str}
         
         --- 履歴開始 ---
         {history_text}
@@ -569,6 +670,7 @@ class DailyReporterAgent(BaseAgent):
         content = types.Content(role='user', parts=[types.Part(text=prompt)])
         
         tips_text = ""
+        radio_script_text = ""
 
         try:
             async for event in runner.run_async(user_id=config.USER_ID, session_id=config.SESSION_ID, new_message=content):
@@ -606,8 +708,46 @@ class DailyReporterAgent(BaseAgent):
                         if tips_text and tips_text.strip() != "なし":
                             await self.post_tips_thread(main_message, tips_text, webhook)
 
-                        # Post audio file if available
-                        await self.post_audio_if_exists(webhook, now_utc)
+                    if event.author == "RadioScriptWriter":
+                        radio_script_text = event.content.parts[0].text.strip()
+                        print("RadioScriptWriter output captured.")
+
+            # After workflow completes, save script and optionally generate/post audio
+            if radio_script_text:
+                try:
+                    base_dir = Path(config.RADIO_BASE_DIR)
+                    paths = radio.resolve_radio_paths(now_utc, base_dir)
+                    radio.save_radio_script(radio_script_text, paths["script_path"])
+
+                    if config.RADIO_ENABLED:
+                        sections = radio.parse_radio_script_json(radio_script_text)
+                        if not sections:
+                            raise RuntimeError("Radio script JSON parse failed")
+
+                        audio_path = await asyncio.to_thread(
+                            radio.generate_radio_audio,
+                            sections,
+                            tts_model=config.RADIO_TTS_MODEL,
+                            voice_labchan=config.RADIO_VOICE_LABCHAN,
+                            voice_yuki=config.RADIO_VOICE_YUKI,
+                            temperature=config.RADIO_TTS_TEMPERATURE,
+                            single_pass=config.RADIO_SINGLE_PASS,
+                            max_chars=config.RADIO_MAX_CHARS,
+                            output_path=paths["audio_path"],
+                            tmp_dir=paths["tmp_dir"],
+                        )
+
+                        if config.RADIO_DRY_RUN:
+                            print(f"Radio dry-run enabled; audio saved at {audio_path}")
+                        else:
+                            mp3_path = audio_path.with_suffix(".mp3")
+                            radio.convert_wav_to_mp3(audio_path, mp3_path, config.RADIO_MP3_BITRATE)
+                            if mp3_path.exists() and mp3_path.stat().st_size <= config.RADIO_MAX_UPLOAD_BYTES:
+                                await self.post_audio(webhook, mp3_path)
+                            else:
+                                print("Audio too large after mp3; skipping audio.")
+                except Exception as e:
+                    print(f"Radio generation failed: {e}")
 
         except Exception as e:
             await target_channel.send(f"❌ Error: {e}")

@@ -33,5 +33,7 @@ jobs:
           DISCORD_TOKEN: ${{ secrets.DISCORD_TOKEN }}
           DISCORD_CHANNEL_ID: ${{ inputs.channel_override || secrets.DISCORD_CHANNEL_ID }}
           SOURCE_CHANNEL_IDS: ${{ secrets.SOURCE_CHANNEL_IDS }}
+          SOURCE_CATEGORY_IDS: ${{ secrets.SOURCE_CATEGORY_IDS }}
+          SOURCE_CHANNEL_EXCLUDE_IDS: ${{ secrets.SOURCE_CHANNEL_EXCLUDE_IDS }}
         run: |
           python main.py --once
