@@ -117,9 +117,16 @@ class CommunityAnalyticsAgent(BaseAgent):
             return
 
         ch = self._client.get_channel(channel_id)
-        if not isinstance(ch, discord.TextChannel):
+        if ch is None:
+            try:
+                ch = await self._client.fetch_channel(channel_id)
+            except Exception:
+                if self.config.debug:
+                    print(f"[community_analytics] dashboard: failed to fetch channel: {channel_id}")
+                return
+        if not isinstance(ch, discord.abc.Messageable):
             if self.config.debug:
-                print(f"[community_analytics] dashboard: channel not TextChannel: {channel_id}")
+                print(f"[community_analytics] dashboard: channel not messageable: {channel_id}")
             return
 
         forced_message_id = int(self.config.dashboard_message_id or 0)
