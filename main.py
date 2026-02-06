@@ -92,7 +92,7 @@ def main():
                 await membership_checker.run_scheduled_check()
             elif run_once_target == "analytics" and community_analytics:
                 await community_analytics.on_ready(client)
-                await community_analytics.run_scheduled_report(target_channel_id=int(run_once_channel_id))
+                await community_analytics.run_scheduled_report()
             elif daily_reporter:
                 # daily_reporter の実行
                 target_channel_id = run_once_channel_id

@@ -8,6 +8,12 @@ from pathlib import Path
 def _is_enabled(value: str) -> bool:
     return value.strip().lower() not in {"0", "false", "no"}
 
+def _get_bool_env(name: str, default: bool) -> bool:
+    raw = os.getenv(name)
+    if raw is None:
+        return default
+    return raw.strip().lower() in {"1", "true", "yes"}
+
 
 def _get_int_env(name: str, default: int) -> int:
     raw = os.getenv(name, "").strip()
@@ -44,6 +50,11 @@ class CommunityAnalyticsConfig:
     source_channel_ids: list[int]
     source_category_ids: list[int]
     source_channel_exclude_ids: set[int]
+    dashboard_enabled: bool
+    dashboard_update_seconds: int
+    dashboard_message_id: int
+    dashboard_pin: bool
+    dashboard_state_path: Path
 
 
 def load_config() -> CommunityAnalyticsConfig:
@@ -57,6 +68,21 @@ def load_config() -> CommunityAnalyticsConfig:
     source_category_ids = _parse_int_csv(os.getenv("SOURCE_CATEGORY_IDS", ""))
     source_channel_exclude_ids = set(_parse_int_csv(os.getenv("SOURCE_CHANNEL_EXCLUDE_IDS", "")))
 
+    dashboard_enabled = _is_enabled(os.getenv("COMMUNITY_ANALYTICS_DASHBOARD_ENABLED", "false"))
+    dashboard_update_seconds = max(
+        60,
+        _get_int_env("COMMUNITY_ANALYTICS_DASHBOARD_UPDATE_SECONDS", 3600),
+    )
+    dashboard_message_id = _get_int_env("COMMUNITY_ANALYTICS_DASHBOARD_MESSAGE_ID", 0)
+    dashboard_pin = _get_bool_env("COMMUNITY_ANALYTICS_DASHBOARD_PIN", False)
+
+    dashboard_state_path = Path(
+        os.getenv(
+            "COMMUNITY_ANALYTICS_DASHBOARD_STATE_PATH",
+            str(data_dir / "dashboard_state.json"),
+        )
+    )
+
     return CommunityAnalyticsConfig(
         enabled=enabled,
         channel_id=channel_id,
@@ -66,5 +92,9 @@ def load_config() -> CommunityAnalyticsConfig:
         source_channel_ids=source_channel_ids,
         source_category_ids=source_category_ids,
         source_channel_exclude_ids=source_channel_exclude_ids,
+        dashboard_enabled=dashboard_enabled,
+        dashboard_update_seconds=dashboard_update_seconds,
+        dashboard_message_id=dashboard_message_id,
+        dashboard_pin=dashboard_pin,
+        dashboard_state_path=dashboard_state_path,
     )
-

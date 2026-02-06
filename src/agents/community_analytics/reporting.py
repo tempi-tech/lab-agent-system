@@ -84,6 +84,7 @@ def format_weekly_report(payload: dict[str, Any]) -> list[str]:
     integrations = (
         payload.get("integrations", {}) if isinstance(payload.get("integrations"), dict) else {}
     )
+    errors = payload.get("errors", []) if isinstance(payload.get("errors"), list) else []
 
     days = int(window.get("days", 0) or 0) or 7
     generated_at = payload.get("generated_at")
@@ -103,6 +104,13 @@ def format_weekly_report(payload: dict[str, Any]) -> list[str]:
     lines.append(title)
     lines.append(f"- Total messages (non-bot): **{total}**")
     lines.append(f"- Unique authors: **{authors}**")
+    if errors:
+        sample = ", ".join(str(e) for e in errors[:3] if isinstance(e, str))
+        more = f" (+{len(errors) - 3} more)" if len(errors) > 3 else ""
+        if sample:
+            lines.append(f"- ⚠️ Fetch errors: {sample}{more}")
+        else:
+            lines.append(f"- ⚠️ Fetch errors: {len(errors)}")
 
     if delta:
         d_total = int(delta.get("total_messages", 0) or 0)
@@ -177,4 +185,3 @@ def _parse_dt(value: Any) -> datetime | None:
         return dt
     except Exception:
         return None
-
