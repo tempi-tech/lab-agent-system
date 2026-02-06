@@ -13,6 +13,7 @@ from src.agents.lab_onboarder import get_agent as get_lab_onboarder
 from src.agents.membership_checker import get_agent as get_membership_checker
 from src.agents.updates_assistant import get_agent as get_updates_assistant
 from src.agents.claude_search import get_agent as get_claude_search
+from src.agents.community_analytics import get_agent as get_community_analytics
 
 # Load environment variables
 load_dotenv()
@@ -36,12 +37,16 @@ def main():
     enable_daily = os.getenv("ENABLE_DAILY_REPORTER", "1").strip().lower() not in {"0", "false", "no"}
     daily_reporter = None
     membership_checker = None
+    community_analytics = None
 
     # Run-once mode: register only the target agent
     if run_once:
         if run_once_target == "membership":
             membership_checker = get_membership_checker()
             client.register_agent(membership_checker)
+        elif run_once_target == "analytics":
+            community_analytics = get_community_analytics()
+            client.register_agent(community_analytics)
         else:
             # Default: daily_reporter
             if enable_daily:
@@ -58,6 +63,7 @@ def main():
         client.register_agent(get_operator())
         client.register_agent(get_lab_onboarder())
         client.register_agent(get_membership_checker())
+        client.register_agent(get_community_analytics())
         if enable_updates:
             client.register_agent(get_updates_assistant())
         if enable_claude_search:
@@ -84,6 +90,9 @@ def main():
                 # membership_checker の定期チェック実行
                 await membership_checker.on_ready(client)
                 await membership_checker.run_scheduled_check()
+            elif run_once_target == "analytics" and community_analytics:
+                await community_analytics.on_ready(client)
+                await community_analytics.run_scheduled_report(target_channel_id=int(run_once_channel_id))
             elif daily_reporter:
                 # daily_reporter の実行
                 target_channel_id = run_once_channel_id
