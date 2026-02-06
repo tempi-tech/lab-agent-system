@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from datetime import datetime
-from typing import Callable, Iterable, List
+from typing import Callable, Iterable, List, cast
 
 import httpx
 
@@ -25,8 +25,8 @@ def build_search_params(
     channel_ids: Iterable[int] | None,
     author_ids: Iterable[int] | None,
     limit: int,
-) -> List[tuple[str, str]]:
-    params: List[tuple[str, str]] = [("content", query)]
+) -> List[tuple[str, str | int | float | bool | None]]:
+    params: List[tuple[str, str | int | float | bool | None]] = [("content", query)]
     if channel_ids:
         for channel_id in channel_ids:
             params.append(("channel_id", str(channel_id)))
@@ -62,7 +62,11 @@ async def search_messages_discord(
     headers = {"authorization": f"Bot {bot_token}"}
 
     try:
-        async with httpx.AsyncClient(timeout=20, transport=transport) as client:
+        async with httpx.AsyncClient(
+            timeout=20,
+            # httpx typing expects AsyncBaseTransport; MockTransport works at runtime for AsyncClient.
+            transport=cast(httpx.AsyncBaseTransport | None, transport),
+        ) as client:
             resp = await client.get(url, params=params, headers=headers)
     except httpx.RequestError:
         return None

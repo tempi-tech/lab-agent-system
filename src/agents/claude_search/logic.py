@@ -139,11 +139,14 @@ class ClaudeSearchAgent(BaseAgent):
         if not self._discord_token:
             self._debug("DISCORD_TOKEN not set; cannot call search API")
             return None
+        if not message.guild:
+            return None
+        guild = message.guild
         raw_results = await search_messages_discord(
-            guild_id=message.guild.id,
+            guild_id=guild.id,
             query=query,
             bot_token=self._discord_token,
-            channel_ids=self._resolve_allowed_channel_ids_for_guild(message.guild),
+            channel_ids=self._resolve_allowed_channel_ids_for_guild(guild),
             author_ids=None,
             limit=self.config.discord_search_limit,
             resolve_channel_name=self._resolve_channel_name,
@@ -160,13 +163,17 @@ class ClaudeSearchAgent(BaseAgent):
     ) -> List[DiscordSearchResult]:
         if not self._client or not message.guild:
             return results
-        member = message.author
+        if not isinstance(message.author, discord.Member):
+            return results
+        member: discord.Member = message.author
         filtered: List[DiscordSearchResult] = []
         for result in results:
             channel = self._client.get_channel(result.channel_id)
             if not channel:
                 continue
             try:
+                if not isinstance(channel, (discord.abc.GuildChannel, discord.Thread)):
+                    continue
                 perms = channel.permissions_for(member)
             except Exception:
                 continue

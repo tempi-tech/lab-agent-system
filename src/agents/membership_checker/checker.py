@@ -6,7 +6,7 @@ import re
 from datetime import datetime
 from glob import glob
 from pathlib import Path
-from typing import Dict, List, Optional, Set, Tuple
+from typing import Any, Dict, List, Optional, Set, Tuple
 
 import discord
 
@@ -82,7 +82,7 @@ async def check_status(
 
     agi_lab_role = guild.get_role(config.general_role_id)
 
-    result = {
+    result: dict[str, Any] = {
         "timestamp": datetime.now().isoformat(),
         "csv_path": str(csv_path),
         "statistics": {
@@ -107,7 +107,7 @@ async def check_status(
     }
 
     # ユーザー名→メンバーのマップを作成
-    member_name_map = {}
+    member_name_map: dict[str, discord.Member] = {}
     for m in guild.members:
         member_name_map[m.name.lower()] = m
         if m.global_name:
@@ -188,7 +188,7 @@ async def assign_roles(
     if not agi_lab_role:
         raise RuntimeError(f"Role {config.general_role_id} が見つかりません")
 
-    result = {
+    result: dict[str, Any] = {
         "timestamp": datetime.now().isoformat(),
         "csv_path": str(csv_path),
         "preview": not execute,
@@ -215,7 +215,7 @@ async def assign_roles(
 
     # ユーザー名会員でロールなしを検出（confirm_usernames時のみ）
     if confirm_usernames:
-        member_name_map = {}
+        member_name_map: dict[str, discord.Member] = {}
         for m in guild.members:
             member_name_map[m.name.lower()] = m
             if m.global_name:
@@ -269,7 +269,7 @@ async def export_followup(
     discord_users = parse_csv(csv_path)
     active_valid_ids, active_usernames = get_active_members(discord_users)
 
-    result = {
+    result: dict[str, Any] = {
         "timestamp": datetime.now().isoformat(),
         "csv_path": str(csv_path),
         "followup_list": [],
@@ -294,7 +294,7 @@ async def export_followup(
                 )
 
     # ユーザー名会員で未参加
-    member_name_map = {}
+    member_name_map: dict[str, discord.Member] = {}
     for m in guild.members:
         member_name_map[m.name.lower()] = m
         if m.global_name:
@@ -348,7 +348,7 @@ async def sync_roles(
     to_remove_ids = discord_ids_with_role - note_discord_ids
     to_keep_ids = discord_ids_with_role & note_discord_ids
 
-    result = {
+    result: dict[str, Any] = {
         "timestamp": datetime.now().isoformat(),
         "csv_path": str(csv_path),
         "preview": not execute,

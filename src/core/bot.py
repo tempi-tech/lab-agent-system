@@ -11,7 +11,7 @@ if TYPE_CHECKING:
 class CommunityBot(discord.Client):
     def __init__(self, intents: discord.Intents):
         super().__init__(intents=intents)
-        self.agents = []
+        self.agents: list["BaseAgent"] = []
         self.actions = ActionRegistry()
         self.tree = app_commands.CommandTree(self)
 

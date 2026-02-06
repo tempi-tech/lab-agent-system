@@ -110,23 +110,27 @@ class MembershipCheckerAgent(BaseAgent):
         if not self.config or not self._client:
             print(f"[{self.name}] Not initialized")
             return
+        config = self.config
+        client = self._client
 
-        guild = self._client.get_guild(self.config.guild_id)
+        guild = client.get_guild(config.guild_id)
         if not guild:
-            print(f"[{self.name}] Guild {self.config.guild_id} not found")
+            print(f"[{self.name}] Guild {config.guild_id} not found")
             return
 
-        csv_path = find_latest_csv(self.config.csv_dir)
+        csv_path = find_latest_csv(config.csv_dir)
         if not csv_path:
-            print(f"[{self.name}] CSV not found in {self.config.csv_dir}")
+            print(f"[{self.name}] CSV not found in {config.csv_dir}")
             return
 
-        log_channel = None
-        if self.config.log_channel_id:
-            log_channel = self._client.get_channel(self.config.log_channel_id)
+        log_channel: discord.TextChannel | None = None
+        if config.log_channel_id:
+            ch = client.get_channel(config.log_channel_id)
+            if isinstance(ch, discord.TextChannel):
+                log_channel = ch
 
         # ステータスチェック
-        result = await check_status(guild, self.config, csv_path)
+        result = await check_status(guild, config, csv_path)
         report = self._format_status_report(result)
 
         if log_channel:
@@ -175,6 +179,7 @@ class MembershipCheckerAgent(BaseAgent):
         csv_path: Path,
     ) -> None:
         """参加状況レポート"""
+        assert self.config is not None
         await channel.send(f"📊 会員状況を確認中... (CSV: `{csv_path.name}`)")
 
         result = await check_status(guild, self.config, csv_path)
@@ -192,6 +197,7 @@ class MembershipCheckerAgent(BaseAgent):
         confirm_usernames: bool,
     ) -> None:
         """ロール付与"""
+        assert self.config is not None
         mode = "実行" if execute else "プレビュー"
         await channel.send(f"🔧 ロール付与 ({mode}) を実行中...")
 
@@ -211,6 +217,7 @@ class MembershipCheckerAgent(BaseAgent):
         include_no_email: bool,
     ) -> None:
         """未参加者リスト"""
+        assert self.config is not None
         await channel.send("📋 未参加者リストを生成中...")
 
         result = await export_followup(guild, self.config, csv_path, include_no_email)
@@ -237,6 +244,7 @@ class MembershipCheckerAgent(BaseAgent):
         execute: bool,
     ) -> None:
         """退会者同期"""
+        assert self.config is not None
         mode = "実行" if execute else "プレビュー"
         await channel.send(f"🔄 退会者同期 ({mode}) を実行中...")
 
@@ -374,6 +382,7 @@ Discordロール保持者: {result['discord_role_members']}名
 
     def _save_report(self, report_type: str, result: dict) -> Path:
         """レポートをJSONで保存"""
+        assert self.config is not None
         timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
         filename = f"{report_type}_{timestamp}.json"
         filepath = self.config.data_dir / filename
@@ -385,6 +394,7 @@ Discordロール保持者: {result['discord_role_members']}名
 
     def _export_followup_csv(self, result: dict) -> Path:
         """フォローアップリストをCSVで出力"""
+        assert self.config is not None
         timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
         filename = f"followup_{timestamp}.csv"
         filepath = self.config.data_dir / filename

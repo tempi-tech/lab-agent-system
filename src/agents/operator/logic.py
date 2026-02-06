@@ -26,7 +26,8 @@ class OperatorAgent(BaseAgent):
         return "operator"
 
     async def on_ready(self, client: discord.Client) -> None:
-        self._actions = client.actions
+        actions = getattr(client, "actions", None)
+        self._actions = actions if isinstance(actions, ActionRegistry) else None
         print("OperatorAgent is ready.")
 
     async def on_message(self, message: discord.Message) -> None:
