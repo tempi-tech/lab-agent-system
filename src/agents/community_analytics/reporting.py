@@ -120,7 +120,14 @@ def format_weekly_report(payload: dict[str, Any]) -> list[str]:
     if daily_counts:
         lines.append("")
         lines.append("**Daily counts (JST)**")
-        for day, count in sorted(((str(k), int(v or 0)) for k, v in daily_counts.items()), key=lambda kv: kv[0]):
+
+        ordered = sorted(((str(k), int(v or 0)) for k, v in daily_counts.items()), key=lambda kv: kv[0])
+        values = [count for _, count in ordered]
+        spark = _sparkline(values)
+        if spark:
+            lines.append(f"`{spark}`  (min={min(values)}, max={max(values)})")
+
+        for day, count in ordered:
             lines.append(f"- {day}: {count}")
 
     if top_channels:
@@ -185,3 +192,29 @@ def _parse_dt(value: Any) -> datetime | None:
         return dt
     except Exception:
         return None
+
+
+def _sparkline(values: list[int], *, chars: str = "._-~=+*#%@") -> str:
+    """
+    ASCII-only mini graph for Discord (deterministic, dependency-free).
+    """
+    if not values:
+        return ""
+    lo = min(values)
+    hi = max(values)
+    if hi == lo:
+        ch = chars[0] if hi == 0 else chars[-1]
+        return ch * len(values)
+
+    span = hi - lo
+    steps = len(chars) - 1
+
+    out: list[str] = []
+    for v in values:
+        idx = int((v - lo) * steps / span)
+        if idx < 0:
+            idx = 0
+        elif idx > steps:
+            idx = steps
+        out.append(chars[idx])
+    return "".join(out)
