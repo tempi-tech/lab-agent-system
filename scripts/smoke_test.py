@@ -1,9 +1,16 @@
 import os
+import sys
+from pathlib import Path
+
 import discord
 from dotenv import load_dotenv
 
 # Load env first so daily_reporter config picks it up.
 load_dotenv()
+
+ROOT = Path(__file__).resolve().parents[1]
+if str(ROOT) not in sys.path:
+    sys.path.insert(0, str(ROOT))
 
 TEST_CHANNEL_ID = int(os.getenv("SMOKE_TEST_CHANNEL_ID", "0"))
 os.environ["DISCORD_CHANNEL_ID"] = str(TEST_CHANNEL_ID)

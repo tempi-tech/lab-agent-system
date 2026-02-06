@@ -1,5 +1,5 @@
+import base64
 import json
-import mimetypes
 import os
 import struct
 import subprocess
@@ -7,9 +7,7 @@ import wave
 from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
-from typing import Iterable
-
-from typing import Any
+from typing import Any, Iterable
 
 
 @dataclass
@@ -119,7 +117,9 @@ def render_section_for_tts(section: RadioSection) -> str:
     return "\n".join(lines).strip()
 
 
-def render_full_script_for_tts(sections: list[RadioSection], max_chars: int | None = None) -> str:
+def render_full_script_for_tts(
+    sections: list[RadioSection], max_chars: int | None = None
+) -> str:
     header = _base_tts_header()
     lines: list[str] = [header, ""]
     for section in sections:
@@ -179,13 +179,80 @@ def _parse_audio_mime_type(mime_type: str) -> dict[str, int]:
                 rate = int(param.split("=", 1)[1])
             except (ValueError, IndexError):
                 pass
-        elif param.startswith("audio/L"):
+        elif param.lower().startswith("audio/l"):
             try:
-                bits_per_sample = int(param.split("L", 1)[1])
+                # Examples: audio/L16, audio/l24
+                bits_per_sample = int(param.lower().split("audio/l", 1)[1])
             except (ValueError, IndexError):
                 pass
 
     return {"bits_per_sample": bits_per_sample, "rate": rate}
+
+
+_WAV_MIME_TYPES = {
+    "audio/wav",
+    "audio/x-wav",
+    "audio/wave",
+    "audio/x-wave",
+    "audio/vnd.wave",
+}
+
+
+def _looks_like_wav(audio_data: bytes) -> bool:
+    return (
+        len(audio_data) >= 12
+        and audio_data[0:4] == b"RIFF"
+        and audio_data[8:12] == b"WAVE"
+    )
+
+
+def _ffmpeg_decode_to_wav(audio_data: bytes) -> bytes:
+    # Best-effort decode to WAV using ffmpeg. This supports many formats (mp3, wav, etc.).
+    proc = subprocess.run(
+        [
+            "ffmpeg",
+            "-hide_banner",
+            "-loglevel",
+            "error",
+            "-i",
+            "pipe:0",
+            "-f",
+            "wav",
+            "pipe:1",
+        ],
+        input=audio_data,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+        check=True,
+    )
+    return proc.stdout
+
+
+def _ensure_wav_bytes(audio_data: bytes, mime_type: str | None) -> bytes:
+    if not audio_data:
+        return b""
+    if _looks_like_wav(audio_data):
+        return audio_data
+
+    base_mime = (mime_type or "").split(";", 1)[0].strip().lower()
+
+    # Some SDKs return a MIME like audio/wav but Python's mimetypes may not recognize it.
+    # If it's already a WAV, we returned above; otherwise, try decoding (or fall back).
+    if base_mime in _WAV_MIME_TYPES:
+        try:
+            return _ffmpeg_decode_to_wav(audio_data)
+        except (FileNotFoundError, subprocess.CalledProcessError):
+            return _convert_to_wav(audio_data, mime_type or "audio/L16;rate=24000")
+
+    # Raw PCM in Lxx format: wrap with a WAV header using the declared rate/bit-depth.
+    if base_mime.startswith("audio/l") or base_mime in {"audio/pcm"}:
+        return _convert_to_wav(audio_data, mime_type or "audio/L16;rate=24000")
+
+    # Unknown/encoded audio: try ffmpeg, otherwise fall back to treating bytes as PCM.
+    try:
+        return _ffmpeg_decode_to_wav(audio_data)
+    except (FileNotFoundError, subprocess.CalledProcessError):
+        return _convert_to_wav(audio_data, mime_type or "audio/L16;rate=24000")
 
 
 def _synthesize_section_audio(
@@ -240,18 +307,30 @@ def _synthesize_section_audio(
         contents=contents,
         config=generate_content_config,
     ):
-        if (
-            chunk.candidates is None
-            or chunk.candidates[0].content is None
-            or chunk.candidates[0].content.parts is None
-        ):
+        candidates = getattr(chunk, "candidates", None)
+        if not candidates:
             continue
 
-        part = chunk.candidates[0].content.parts[0]
-        if part.inline_data and part.inline_data.data:
+        content = candidates[0].content
+        if content is None or not getattr(content, "parts", None):
+            continue
+
+        for part in content.parts:
+            inline_data = getattr(part, "inline_data", None)
+            if not inline_data or not getattr(inline_data, "data", None):
+                continue
+
             if mime_type is None:
-                mime_type = part.inline_data.mime_type
-            audio_chunks.append(part.inline_data.data)
+                mime_type = getattr(inline_data, "mime_type", None)
+
+            data = inline_data.data
+            if isinstance(data, str):
+                try:
+                    audio_chunks.append(base64.b64decode(data))
+                except Exception:
+                    continue
+            else:
+                audio_chunks.append(bytes(data))
 
     if not audio_chunks:
         return b"", mime_type
@@ -294,9 +373,7 @@ def generate_radio_audio(
         if not audio_bytes:
             raise RuntimeError("No audio bytes from single-pass TTS")
         mime_type = mime_type or "audio/L16;rate=24000"
-        file_extension = mimetypes.guess_extension(mime_type)
-        if file_extension is None or file_extension.lower() != ".wav":
-            audio_bytes = _convert_to_wav(audio_bytes, mime_type)
+        audio_bytes = _ensure_wav_bytes(audio_bytes, mime_type)
         output_path.parent.mkdir(parents=True, exist_ok=True)
         output_path.write_bytes(audio_bytes)
         return output_path
@@ -326,9 +403,7 @@ def generate_radio_audio(
             continue
 
         mime_type = mime_type or "audio/L16;rate=24000"
-        file_extension = mimetypes.guess_extension(mime_type)
-        if file_extension is None or file_extension.lower() != ".wav":
-            audio_bytes = _convert_to_wav(audio_bytes, mime_type)
+        audio_bytes = _ensure_wav_bytes(audio_bytes, mime_type)
 
         section_path = tmp_dir / f"section_{idx:02d}_{section.name}.wav"
         section_path.write_bytes(audio_bytes)

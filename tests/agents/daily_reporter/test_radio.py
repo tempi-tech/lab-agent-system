@@ -78,3 +78,20 @@ def test_resolve_radio_paths() -> None:
     assert "tmp_dir" in paths
     assert paths["script_path"].as_posix().startswith(base_dir.as_posix())
     assert "2026_01_01" in paths["script_path"].name
+
+
+def test_ensure_wav_bytes_passthrough_for_audio_wav(tmp_path: Path) -> None:
+    wav_path = tmp_path / "in.wav"
+    _write_wav(wav_path, frames=10, rate=22050)
+    data = wav_path.read_bytes()
+
+    out = radio._ensure_wav_bytes(data, "audio/wav")
+    assert out == data
+
+
+def test_ensure_wav_bytes_wraps_l16_pcm() -> None:
+    pcm = b"\x00\x00" * 10
+    out = radio._ensure_wav_bytes(pcm, "audio/L16;rate=24000")
+    assert out[:4] == b"RIFF"
+    assert out[8:12] == b"WAVE"
+    assert len(out) == len(pcm) + 44
