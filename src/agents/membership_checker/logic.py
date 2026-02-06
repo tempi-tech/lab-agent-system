@@ -13,6 +13,7 @@ from .checker import (
     assign_roles,
     check_status,
     export_followup,
+    fetch_all_members,
     find_latest_csv,
     sync_roles,
 )
@@ -129,15 +130,21 @@ class MembershipCheckerAgent(BaseAgent):
             if isinstance(ch, discord.TextChannel):
                 log_channel = ch
 
+        prev = self._load_latest_status()
+
         # ステータスチェック
-        result = await check_status(guild, config, csv_path)
+        members = await fetch_all_members(guild)
+        result = await check_status(guild, config, csv_path, members=members)
         report = self._format_status_report(result)
+        if prev:
+            report += "\n" + format_status_delta(prev, result)
 
         if log_channel:
             await log_channel.send(report)
 
         # ファイル保存
         self._save_report("status", result)
+        self._save_latest_status(result)
 
         print(f"[{self.name}] Scheduled check completed")
 
@@ -182,11 +189,16 @@ class MembershipCheckerAgent(BaseAgent):
         assert self.config is not None
         await channel.send(f"📊 会員状況を確認中... (CSV: `{csv_path.name}`)")
 
-        result = await check_status(guild, self.config, csv_path)
+        prev = self._load_latest_status()
+        members = await fetch_all_members(guild)
+        result = await check_status(guild, self.config, csv_path, members=members)
         report = self._format_status_report(result)
+        if prev:
+            report += "\n" + format_status_delta(prev, result)
 
         await channel.send(report)
         self._save_report("status", result)
+        self._save_latest_status(result)
 
     async def _handle_assign(
         self,
@@ -201,8 +213,9 @@ class MembershipCheckerAgent(BaseAgent):
         mode = "実行" if execute else "プレビュー"
         await channel.send(f"🔧 ロール付与 ({mode}) を実行中...")
 
+        members = await fetch_all_members(guild)
         result = await assign_roles(
-            guild, self.config, csv_path, execute, confirm_usernames
+            guild, self.config, csv_path, execute, confirm_usernames, members=members
         )
         report = self._format_assign_report(result)
 
@@ -220,7 +233,10 @@ class MembershipCheckerAgent(BaseAgent):
         assert self.config is not None
         await channel.send("📋 未参加者リストを生成中...")
 
-        result = await export_followup(guild, self.config, csv_path, include_no_email)
+        members = await fetch_all_members(guild)
+        result = await export_followup(
+            guild, self.config, csv_path, include_no_email, members=members
+        )
         report = self._format_followup_report(result)
 
         await channel.send(report)
@@ -248,7 +264,8 @@ class MembershipCheckerAgent(BaseAgent):
         mode = "実行" if execute else "プレビュー"
         await channel.send(f"🔄 退会者同期 ({mode}) を実行中...")
 
-        result = await sync_roles(guild, self.config, csv_path, execute)
+        members = await fetch_all_members(guild)
+        result = await sync_roles(guild, self.config, csv_path, execute, members=members)
         report = self._format_sync_report(result)
 
         await channel.send(report)
@@ -392,6 +409,29 @@ Discordロール保持者: {result['discord_role_members']}名
 
         return filepath
 
+    def _latest_status_path(self) -> Path:
+        assert self.config is not None
+        return self.config.data_dir / "latest_status.json"
+
+    def _load_latest_status(self) -> dict | None:
+        if not self.config:
+            return None
+        path = self._latest_status_path()
+        if not path.exists():
+            return None
+        try:
+            return json.loads(path.read_text(encoding="utf-8"))
+        except Exception:
+            return None
+
+    def _save_latest_status(self, result: dict) -> None:
+        assert self.config is not None
+        path = self._latest_status_path()
+        try:
+            path.write_text(json.dumps(result, ensure_ascii=False, indent=2), encoding="utf-8")
+        except Exception:
+            return
+
     def _export_followup_csv(self, result: dict) -> Path:
         """フォローアップリストをCSVで出力"""
         assert self.config is not None
@@ -415,3 +455,30 @@ Discordロール保持者: {result['discord_role_members']}名
             writer.writerows(result["followup_list"])
 
         return filepath
+
+
+def _status_counts(result: dict) -> dict[str, int]:
+    members = result.get("members") or {}
+    return {
+        "in_with_role": len(members.get("in_server_with_role") or []),
+        "in_without_role": len(members.get("in_server_without_role") or []),
+        "not_in_server": len(members.get("not_in_server") or []),
+        "username_in_server": len(members.get("username_in_server") or []),
+        "username_not_in_server": len(members.get("username_not_in_server") or []),
+    }
+
+
+def format_status_delta(prev: dict, current: dict) -> str:
+    """前回(latest_status.json)との差分サマリ（deterministic）"""
+    p = _status_counts(prev)
+    c = _status_counts(current)
+    lines = ["```", "Δ 前回からの差分", "━━━━━━━━━━━━━━━━━━━━━━━━━━━━"]
+    for key in ["in_with_role", "in_without_role", "not_in_server", "username_in_server", "username_not_in_server"]:
+        delta = c[key] - p[key]
+        if delta == 0:
+            continue
+        lines.append(f"{key}: {p[key]} -> {c[key]} (Δ {delta:+d})")
+    if len(lines) == 3:
+        lines.append("変化なし")
+    lines.append("```")
+    return "\n".join(lines)

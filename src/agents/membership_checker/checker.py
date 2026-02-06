@@ -13,6 +13,38 @@ import discord
 from .config import MembershipCheckerConfig
 
 
+async def fetch_all_members(guild: discord.Guild) -> list[discord.Member]:
+    """
+    Fetch all guild members via API for correctness.
+    Falls back to cache when API fetch is unavailable.
+    """
+    try:
+        members: list[discord.Member] = []
+        async for member in guild.fetch_members(limit=None):
+            members.append(member)
+        return members
+    except Exception:
+        return list(getattr(guild, "members", []) or [])
+
+
+def build_member_maps(
+    members: list[discord.Member],
+) -> tuple[dict[int, discord.Member], dict[str, discord.Member]]:
+    by_id: dict[int, discord.Member] = {}
+    by_name: dict[str, discord.Member] = {}
+    for m in members:
+        by_id[int(m.id)] = m
+        by_name[m.name.lower()] = m
+        if getattr(m, "global_name", None):
+            by_name[str(m.global_name).lower()] = m
+        by_name[m.display_name.lower()] = m
+    return by_id, by_name
+
+
+def has_role_id(member: discord.Member, role_id: int) -> bool:
+    return any(getattr(role, "id", None) == role_id for role in getattr(member, "roles", []) or [])
+
+
 def find_latest_csv(csv_dir: Path) -> Optional[Path]:
     """最新のCSVファイルを検索"""
     pattern = str(csv_dir / "note_active_*.csv")
@@ -75,12 +107,18 @@ async def check_status(
     guild: discord.Guild,
     config: MembershipCheckerConfig,
     csv_path: Path,
+    *,
+    members: list[discord.Member] | None = None,
 ) -> dict:
     """Discordサーバーの会員状況を確認"""
     discord_users = parse_csv(csv_path)
     active_valid_ids, active_usernames = get_active_members(discord_users)
 
-    agi_lab_role = guild.get_role(config.general_role_id)
+    member_list = members if members is not None else list(getattr(guild, "members", []) or [])
+    member_by_id, member_by_name = build_member_maps(member_list)
+    role_member_count = 0
+    if config.general_role_id:
+        role_member_count = len([m for m in member_list if has_role_id(m, config.general_role_id)])
 
     result: dict[str, Any] = {
         "timestamp": datetime.now().isoformat(),
@@ -95,7 +133,7 @@ async def check_status(
         "server": {
             "name": guild.name,
             "member_count": guild.member_count,
-            "role_members": len(agi_lab_role.members) if agi_lab_role else 0,
+            "role_members": role_member_count,
         },
         "members": {
             "in_server_with_role": [],
@@ -106,21 +144,13 @@ async def check_status(
         },
     }
 
-    # ユーザー名→メンバーのマップを作成
-    member_name_map: dict[str, discord.Member] = {}
-    for m in guild.members:
-        member_name_map[m.name.lower()] = m
-        if m.global_name:
-            member_name_map[m.global_name.lower()] = m
-        member_name_map[m.display_name.lower()] = m
-
     # 有効ID会員のチェック
     for user in active_valid_ids:
         discord_id = int(user["discord_value"])
-        member = guild.get_member(discord_id)
+        member = member_by_id.get(discord_id)
 
         if member:
-            has_role = agi_lab_role in member.roles if agi_lab_role else False
+            has_role = has_role_id(member, config.general_role_id) if config.general_role_id else False
             entry = {
                 "note_name": user["name"],
                 "plan": user["plan"],
@@ -145,10 +175,10 @@ async def check_status(
     # ユーザー名会員のチェック
     for user in active_usernames:
         target = user["discord_value"].lower()
-        member = member_name_map.get(target)
+        member = member_by_name.get(target)
 
         if member:
-            has_role = agi_lab_role in member.roles if agi_lab_role else False
+            has_role = has_role_id(member, config.general_role_id) if config.general_role_id else False
             result["members"]["username_in_server"].append(
                 {
                     "note_name": user["name"],
@@ -179,6 +209,8 @@ async def assign_roles(
     csv_path: Path,
     execute: bool = False,
     confirm_usernames: bool = False,
+    *,
+    members: list[discord.Member] | None = None,
 ) -> dict:
     """ロールを付与する"""
     discord_users = parse_csv(csv_path)
@@ -187,6 +219,9 @@ async def assign_roles(
     agi_lab_role = guild.get_role(config.general_role_id)
     if not agi_lab_role:
         raise RuntimeError(f"Role {config.general_role_id} が見つかりません")
+
+    member_list = members if members is not None else list(getattr(guild, "members", []) or [])
+    member_by_id, member_by_name = build_member_maps(member_list)
 
     result: dict[str, Any] = {
         "timestamp": datetime.now().isoformat(),
@@ -201,9 +236,9 @@ async def assign_roles(
     # 有効ID会員でロールなしを検出
     for user in active_valid_ids:
         discord_id = int(user["discord_value"])
-        member = guild.get_member(discord_id)
+        member = member_by_id.get(discord_id)
 
-        if member and agi_lab_role not in member.roles:
+        if member and not has_role_id(member, config.general_role_id):
             entry = {
                 "note_name": user["name"],
                 "plan": user["plan"],
@@ -215,18 +250,11 @@ async def assign_roles(
 
     # ユーザー名会員でロールなしを検出（confirm_usernames時のみ）
     if confirm_usernames:
-        member_name_map: dict[str, discord.Member] = {}
-        for m in guild.members:
-            member_name_map[m.name.lower()] = m
-            if m.global_name:
-                member_name_map[m.global_name.lower()] = m
-            member_name_map[m.display_name.lower()] = m
-
         for user in active_usernames:
             target = user["discord_value"].lower()
-            member = member_name_map.get(target)
+            member = member_by_name.get(target)
 
-            if member and agi_lab_role not in member.roles:
+            if member and not has_role_id(member, config.general_role_id):
                 entry = {
                     "note_name": user["name"],
                     "plan": user["plan"],
@@ -242,7 +270,7 @@ async def assign_roles(
         all_to_assign = result["to_assign_id"] + result["to_assign_username"]
         for entry in all_to_assign:
             discord_id = int(entry["discord_id"])
-            member = guild.get_member(discord_id)
+            member = member_by_id.get(discord_id)
             if not member:
                 continue
 
@@ -264,10 +292,15 @@ async def export_followup(
     config: MembershipCheckerConfig,
     csv_path: Path,
     include_no_email: bool = False,
+    *,
+    members: list[discord.Member] | None = None,
 ) -> dict:
     """未参加者のフォローアップリストを生成"""
     discord_users = parse_csv(csv_path)
     active_valid_ids, active_usernames = get_active_members(discord_users)
+
+    member_list = members if members is not None else list(getattr(guild, "members", []) or [])
+    member_by_id, member_by_name = build_member_maps(member_list)
 
     result: dict[str, Any] = {
         "timestamp": datetime.now().isoformat(),
@@ -278,7 +311,7 @@ async def export_followup(
     # 有効ID会員で未参加
     for user in active_valid_ids:
         discord_id = int(user["discord_value"])
-        member = guild.get_member(discord_id)
+        member = member_by_id.get(discord_id)
 
         if not member:
             if user["email"] or include_no_email:
@@ -293,17 +326,9 @@ async def export_followup(
                     }
                 )
 
-    # ユーザー名会員で未参加
-    member_name_map: dict[str, discord.Member] = {}
-    for m in guild.members:
-        member_name_map[m.name.lower()] = m
-        if m.global_name:
-            member_name_map[m.global_name.lower()] = m
-        member_name_map[m.display_name.lower()] = m
-
     for user in active_usernames:
         target = user["discord_value"].lower()
-        member = member_name_map.get(target)
+        member = member_by_name.get(target)
 
         if not member:
             if user["email"] or include_no_email:
@@ -326,6 +351,8 @@ async def sync_roles(
     config: MembershipCheckerConfig,
     csv_path: Path,
     execute: bool = False,
+    *,
+    members: list[discord.Member] | None = None,
 ) -> dict:
     """退会者からロールを削除"""
     discord_users = parse_csv(csv_path)
@@ -342,7 +369,9 @@ async def sync_roles(
     if not agi_lab_role:
         raise RuntimeError(f"Role {config.general_role_id} が見つかりません")
 
-    members_with_role = [m for m in guild.members if agi_lab_role in m.roles]
+    member_list = members if members is not None else list(getattr(guild, "members", []) or [])
+    member_by_id, _member_by_name = build_member_maps(member_list)
+    members_with_role = [m for m in member_list if has_role_id(m, config.general_role_id)]
     discord_ids_with_role = {m.id for m in members_with_role}
 
     to_remove_ids = discord_ids_with_role - note_discord_ids
@@ -361,7 +390,7 @@ async def sync_roles(
     }
 
     for uid in to_remove_ids:
-        member = guild.get_member(uid)
+        member = member_by_id.get(uid)
         if member:
             result["to_remove"].append(
                 {
@@ -374,7 +403,7 @@ async def sync_roles(
     if execute:
         for entry in result["to_remove"]:
             uid = int(entry["discord_id"])
-            member = guild.get_member(uid)
+            member = member_by_id.get(uid)
             if not member:
                 continue
 

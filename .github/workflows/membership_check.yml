@@ -35,7 +35,21 @@ jobs:
         run: |
           # GitHub Actions環境ではCSVをダウンロードまたはマウントする必要がある
           # 現時点ではローカル実行を想定（CSV_DIRをsecretsで設定）
-          echo "CSV directory: ${{ secrets.MEMBERSHIP_CHECKER_CSV_DIR }}"
+          CSV_DIR="${{ secrets.MEMBERSHIP_CHECKER_CSV_DIR }}"
+          echo "CSV directory: ${CSV_DIR}"
+          if [ -z "${CSV_DIR}" ]; then
+            echo "ERROR: MEMBERSHIP_CHECKER_CSV_DIR is not set."
+            exit 1
+          fi
+          if [ ! -d "${CSV_DIR}" ]; then
+            echo "ERROR: CSV directory not found: ${CSV_DIR}"
+            exit 1
+          fi
+          ls -la "${CSV_DIR}"
+          if ! ls "${CSV_DIR}"/note_active_*.csv >/dev/null 2>&1; then
+            echo "ERROR: No CSV files found (expected note_active_*.csv) in ${CSV_DIR}"
+            exit 1
+          fi
 
       - name: Run Membership Check
         env:
