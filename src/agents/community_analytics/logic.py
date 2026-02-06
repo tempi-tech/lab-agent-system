@@ -84,6 +84,8 @@ class CommunityAnalyticsAgent(BaseAgent):
             return
 
         await self.generate_and_send_report(ch)
+        if self.config.dashboard_enabled:
+            await self.update_dashboard()
 
     async def _dashboard_loop(self) -> None:
         # Update immediately, then on a fixed interval.
