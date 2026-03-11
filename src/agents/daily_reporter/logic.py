@@ -685,6 +685,7 @@ class DailyReporterAgent(BaseAgent):
                         main_message = await webhook.send(
                             content=text,
                             username=config.REPORTER_NAME,
+                            suppress_embeds=True,
                             wait=True
                         )
                         try:
