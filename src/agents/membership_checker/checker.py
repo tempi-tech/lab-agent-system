@@ -239,7 +239,9 @@ async def assign_roles(
 
     # 実行
     if execute:
-        all_to_assign = result["to_assign_id"] + result["to_assign_username"]
+        # Security: ユーザー名/表示名は本人性の証明にならないため自動付与には使わない
+        # （confirm_usernames はプレビュー/手動確認用の候補抽出に限定）
+        all_to_assign = result["to_assign_id"]
         for entry in all_to_assign:
             discord_id = int(entry["discord_id"])
             member = guild.get_member(discord_id)
