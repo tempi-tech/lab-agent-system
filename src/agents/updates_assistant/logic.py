@@ -212,7 +212,7 @@ class UpdatesAssistantAgent(BaseAgent):
         await self._react(message)
         try:
             logs = await asyncio.wait_for(
-                self._fetch_logs(message.guild, period, channels=channels),
+                self._fetch_logs(message.guild, period, requester=message.author, channels=channels),
                 timeout=20,
             )
         except asyncio.TimeoutError:
@@ -251,7 +251,7 @@ class UpdatesAssistantAgent(BaseAgent):
         await self._react(message)
         try:
             logs = await asyncio.wait_for(
-                self._fetch_logs(message.guild, period, channels=channels),
+                self._fetch_logs(message.guild, period, requester=message.author, channels=channels),
                 timeout=20,
             )
         except asyncio.TimeoutError:
@@ -362,6 +362,7 @@ class UpdatesAssistantAgent(BaseAgent):
         guild: discord.Guild,
         period: str,
         *,
+        requester: discord.abc.User | discord.Member,
         channels: Iterable[discord.abc.GuildChannel] | None = None,
     ) -> List[str] | None:
         since = datetime.now(timezone.utc) - self._period_to_timedelta(period)
@@ -377,6 +378,9 @@ class UpdatesAssistantAgent(BaseAgent):
                 perms = channel.permissions_for(guild.me) if guild.me else None
                 if perms and (not perms.view_channel or not perms.read_message_history):
                     self._debug(f"fetch_logs: skip no-perms #{channel.name}")
+                    continue
+                if not self._can_read_channel(channel, requester):
+                    self._debug(f"fetch_logs: skip requester-no-perms #{channel.name}")
                     continue
                 count = 0
                 async for msg in channel.history(after=since, limit=MAX_MESSAGES_PER_CHANNEL):
@@ -409,6 +413,12 @@ class UpdatesAssistantAgent(BaseAgent):
         if self.config.allowed_channel_ids:
             return [guild.get_channel(cid) for cid in self.config.allowed_channel_ids if guild.get_channel(cid)]
         return list(guild.text_channels)
+
+    def _can_read_channel(self, channel: discord.TextChannel, user: discord.abc.User | discord.Member) -> bool:
+        if not isinstance(user, discord.Member):
+            return False
+        perms = channel.permissions_for(user)
+        return perms.view_channel and perms.read_message_history
 
     async def _generate_text(self, prompt: str) -> str:
         if self._llm_client is None:
