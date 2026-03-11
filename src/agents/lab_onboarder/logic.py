@@ -659,6 +659,7 @@ class LabOnboarderAgent(BaseAgent):
             lines.append(f"{idx}. <#{rid}>")
 
         self._log(f"[DEBUG] posting {len(valid_ids)} recommendations to thread={thread_id}")
+        allowed_mentions = discord.AllowedMentions(users=[user], roles=False, everyone=False)
 
         # Try to post via webhook (ラボちゃん persona)
         posted = False
@@ -670,6 +671,7 @@ class LabOnboarderAgent(BaseAgent):
                         "\n".join(lines),
                         username=LABCHAN_DISPLAY_NAME,
                         thread=thread,
+                        allowed_mentions=allowed_mentions,
                     )
                     self._log(f"[DEBUG] webhook post success thread={thread_id}")
                     posted = True
@@ -679,7 +681,7 @@ class LabOnboarderAgent(BaseAgent):
         # Fallback to direct send if webhook fails
         if not posted:
             try:
-                await thread.send("\n".join(lines))
+                await thread.send("\n".join(lines), allowed_mentions=allowed_mentions)
                 self._log(f"[DEBUG] direct post success thread={thread_id}")
             except Exception as exc:
                 self._log(f"recommendations post failed user={user.id} err={exc}")
