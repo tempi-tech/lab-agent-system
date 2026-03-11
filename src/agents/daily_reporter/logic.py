@@ -267,9 +267,11 @@ class DailyReporterAgent(BaseAgent):
                     url = line.replace("URL:", "").strip()
 
             if summary:
-                formatted_tips.append(f"**{i}. {summary}**")
+                safe_summary = sanitize_message_content(summary)
+                formatted_tips.append(f"**{i}. {safe_summary}**")
                 for point in points:
-                    formatted_tips.append(f"○ {point}")
+                    safe_point = sanitize_message_content(point)
+                    formatted_tips.append(f"○ {safe_point}")
                 if url and url.startswith(DISCORD_URL_PREFIX):
                     formatted_tips.append(f"📎 {url}")
                 formatted_tips.append("")  # 各Tips後に空行
@@ -297,7 +299,8 @@ class DailyReporterAgent(BaseAgent):
             await webhook.send(
                 content=formatted_tips,
                 thread=thread,
-                username=config.REPORTER_NAME
+                username=config.REPORTER_NAME,
+                allowed_mentions=discord.AllowedMentions.none(),
             )
             print(f"Tips thread created: {thread.name}")
             return thread
