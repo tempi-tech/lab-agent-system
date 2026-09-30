@@ -4,6 +4,7 @@ from src.services.invite_role_service.config import load_config
 
 
 def test_load_config_reads_roles_and_paths(tmp_path: Path, monkeypatch) -> None:
+    # The legacy coursePass block below must be tolerated (ignored), not rejected.
     monkeypatch.setenv("DISCORD_TOKEN", "token-123")
     config_path = tmp_path / "invite_role_service.json"
     data_dir = tmp_path / "runtime"
@@ -71,15 +72,7 @@ def test_load_config_reads_roles_and_paths(tmp_path: Path, monkeypatch) -> None:
     assert cfg.phase_for_code("abc") == "legacy"
     assert cfg.is_excluded_code("course123")
     assert not cfg.is_excluded_code("abc")
-    assert cfg.course_pass is not None
-    assert cfg.course_pass.role_id == 5
-    assert cfg.course_pass.panel_channel_id == 6
-    assert cfg.course_pass.panel_message_id == 7
-    assert cfg.course_pass.custom_id == "course_pass_role:claim:test"
-    assert cfg.course_pass.invite_codes == {"git123"}
-    assert cfg.course_pass.open_channel_url == "https://discord.com/channels/1/6"
-    assert cfg.should_grant_course_pass_for_invite("git123")
-    assert not cfg.should_grant_course_pass_for_invite("abc")
+    assert cfg.ignored_legacy_keys == ("coursePass",)
     assert cfg.welcome is not None
     assert cfg.welcome.channel_id == 8
     assert cfg.welcome.intro_channel_id == 9
@@ -99,3 +92,49 @@ def test_load_config_reads_roles_and_paths(tmp_path: Path, monkeypatch) -> None:
     assert cfg.welcome.followup.discrawl_db_path == data_dir / "discrawl.db"
     assert cfg.welcome.followup.archive_max_age_seconds == 1200
     assert cfg.member_log_path == data_dir / "member_log.csv"
+
+
+def test_legacy_course_pass_block_is_ignored_with_warning(
+    tmp_path: Path, monkeypatch, caplog
+) -> None:
+    monkeypatch.setenv("DISCORD_TOKEN", "token-xyz")
+    config_path = tmp_path / "svc.json"
+    config_path.write_text(
+        """
+{
+  "tokenEnv": "DISCORD_TOKEN",
+  "guild_id": 1,
+  "roles": {"general_role_id": 3, "review_role_id": 4},
+  "coursePass": {"roleId": 5, "panelMessageId": 7, "customId": ""},
+  "dataDir": "%s"
+}
+"""
+        % str(tmp_path / "runtime"),
+        encoding="utf-8",
+    )
+
+    with caplog.at_level("WARNING"):
+        cfg = load_config(config_path)
+
+    assert cfg.ignored_legacy_keys == ("coursePass",)
+    assert not hasattr(cfg, "course_pass")
+    assert "coursePass" in caplog.text
+    assert "ignored" in caplog.text
+
+
+def test_config_without_legacy_keys_has_no_warning(
+    tmp_path: Path, monkeypatch, caplog
+) -> None:
+    monkeypatch.setenv("DISCORD_TOKEN", "token-xyz")
+    config_path = tmp_path / "svc.json"
+    config_path.write_text(
+        '{"tokenEnv": "DISCORD_TOKEN", "guild_id": 1, "dataDir": "%s"}'
+        % str(tmp_path / "runtime"),
+        encoding="utf-8",
+    )
+
+    with caplog.at_level("WARNING"):
+        cfg = load_config(config_path)
+
+    assert cfg.ignored_legacy_keys == ()
+    assert caplog.text == ""

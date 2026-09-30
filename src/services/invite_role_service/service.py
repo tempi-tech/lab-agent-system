@@ -12,8 +12,7 @@ from typing import Any
 
 import discord
 
-from .config import CoursePassConfig, InviteRoleServiceConfig
-from .course_pass import evaluate_course_pass_claim
+from .config import InviteRoleServiceConfig
 from .join import plan_join_role_ids
 from .storage import CsvLogStore, JsonStateFile, MemberJoinRecord
 
@@ -22,38 +21,6 @@ class WelcomeDeliveryError(RuntimeError):
     def __init__(self, message: str, *, retry_safe: bool = False):
         super().__init__(message)
         self.retry_safe = retry_safe
-
-
-class CoursePassClaimButton(discord.ui.Button["CoursePassView"]):
-    def __init__(self, view: "CoursePassView"):
-        cfg = view.service.config.course_pass
-        assert cfg is not None
-        super().__init__(
-            label=cfg.button_label,
-            style=discord.ButtonStyle.primary,
-            custom_id=cfg.custom_id,
-        )
-        self._service = view.service
-
-    async def callback(self, interaction: discord.Interaction) -> None:
-        await self._service.handle_course_pass_claim(interaction)
-
-
-class CoursePassView(discord.ui.View):
-    def __init__(self, service: "InviteRoleService"):
-        super().__init__(timeout=None)
-        self.service = service
-        cfg = service.config.course_pass
-        assert cfg is not None
-        self.add_item(CoursePassClaimButton(self))
-        if cfg.open_channel_url:
-            self.add_item(
-                discord.ui.Button(
-                    label=cfg.open_channel_label,
-                    style=discord.ButtonStyle.link,
-                    url=cfg.open_channel_url,
-                )
-            )
 
 
 class InviteRoleService(discord.Client):
@@ -104,17 +71,6 @@ class InviteRoleService(discord.Client):
         self._baseline_task = asyncio.create_task(
             self._baseline_refresh_loop(), name="invite-role-baseline"
         )
-        if self.config.course_pass is not None:
-            self.add_view(
-                CoursePassView(self),
-                message_id=self.config.course_pass.panel_message_id,
-            )
-            self.logger.info(
-                "registered course pass persistent view message=%s custom_id=%s role=%s",
-                self.config.course_pass.panel_message_id,
-                self.config.course_pass.custom_id,
-                self.config.course_pass.role_id,
-            )
 
     async def close(self) -> None:
         tasks = [
@@ -140,8 +96,10 @@ class InviteRoleService(discord.Client):
             guild = await self.fetch_guild(self.config.guild_id)
         self._guild = guild
         await self._refresh_invites_baseline(reason="startup")
-        if self.config.course_pass is not None:
-            await self._validate_course_pass_setup(guild, self.config.course_pass)
+        for key in self.config.ignored_legacy_keys:
+            self.logger.warning(
+                "config key '%s' is no longer supported and is ignored", key
+            )
         if self.config.welcome is not None and self.config.welcome.enabled:
             await self._validate_welcome_setup(guild)
             if (
@@ -270,96 +228,6 @@ class InviteRoleService(discord.Client):
             await self._send_welcome_if_enabled(
                 member=member, invite_type=invite_type, role_names=role_names
             )
-
-    async def handle_course_pass_claim(self, interaction: discord.Interaction) -> None:
-        cfg = self.config.course_pass
-        if cfg is None:
-            await self._respond_ephemeral(
-                interaction, "Course Pass は現在利用できません。"
-            )
-            return
-
-        guild = interaction.guild
-        member = (
-            interaction.user if isinstance(interaction.user, discord.Member) else None
-        )
-        course_role = guild.get_role(cfg.role_id) if guild is not None else None
-        general_role = (
-            guild.get_role(self.config.general_role_id)
-            if guild is not None and cfg.grant_general_role
-            else None
-        )
-        required_roles = [
-            role for role in (course_role, general_role) if role is not None
-        ]
-        missing_required_role = course_role is None or (
-            cfg.grant_general_role and general_role is None
-        )
-        bot_member = (
-            await self._resolve_bot_member(guild) if guild is not None else None
-        )
-        bot_can_manage_roles = False
-        bot_top_pos = -1
-        if bot_member is not None:
-            bot_can_manage_roles = (
-                bot_member.guild_permissions.manage_roles
-                or bot_member.guild_permissions.administrator
-            )
-            bot_top_pos = bot_member.top_role.position
-
-        highest_required_role_position = max(
-            (role.position for role in required_roles), default=0
-        )
-        member_has_required_roles = (
-            member is not None
-            and course_role is not None
-            and course_role in member.roles
-            and (
-                not cfg.grant_general_role
-                or (general_role is not None and general_role in member.roles)
-            )
-        )
-
-        decision = evaluate_course_pass_claim(
-            interaction_guild_id=guild.id if guild is not None else None,
-            expected_guild_id=self.config.guild_id,
-            member_is_resolved=member is not None,
-            role_exists=not missing_required_role,
-            bot_member_resolved=bot_member is not None,
-            bot_has_manage_roles=bot_can_manage_roles,
-            bot_top_role_position=bot_top_pos,
-            role_position=highest_required_role_position,
-            member_has_role=member_has_required_roles,
-        )
-
-        if decision.should_add_role:
-            assert member is not None
-            roles_to_add = [role for role in required_roles if role not in member.roles]
-            try:
-                if roles_to_add:
-                    await member.add_roles(
-                        *roles_to_add,
-                        reason=f"invite-role-service: course pass button {cfg.custom_id}",
-                    )
-            except Exception as exc:
-                self.logger.exception(
-                    "failed assigning course pass role to %s", member.id
-                )
-                await self._respond_ephemeral(
-                    interaction, "ロール付与に失敗しました。運営に連絡してください。"
-                )
-                await self._log(
-                    f"course_pass assignment failed member={member.id} roles={','.join(str(role.id) for role in required_roles)} error={type(exc).__name__}: {exc}"
-                )
-                return
-
-        await self._respond_ephemeral(interaction, decision.user_message)
-
-        member_id = member.id if member is not None else "unknown"
-        role_ids = ",".join(str(role.id) for role in required_roles) or str(cfg.role_id)
-        await self._log(
-            f"course_pass outcome={decision.outcome.value} member={member_id} roles={role_ids} detail={decision.log_detail}"
-        )
 
     async def _heartbeat_loop(self) -> None:
         while True:
@@ -1342,55 +1210,6 @@ class InviteRoleService(discord.Client):
             node_ok,
             cwd_ok,
             cfg.threaded,
-        )
-
-    async def _validate_course_pass_setup(
-        self, guild: discord.Guild, cfg: CoursePassConfig
-    ) -> None:
-        role = guild.get_role(cfg.role_id)
-        bot_member = await self._resolve_bot_member(guild)
-        can_manage_roles = False
-        hierarchy_ok = False
-        if bot_member is not None:
-            can_manage_roles = (
-                bot_member.guild_permissions.manage_roles
-                or bot_member.guild_permissions.administrator
-            )
-            hierarchy_ok = (
-                role is not None and bot_member.top_role.position > role.position
-            )
-
-        component_found = False
-        fetch_error: str | None = None
-        if cfg.panel_channel_id is None:
-            fetch_error = "skipped: panelChannelId not configured"
-        else:
-            try:
-                channel = self.get_channel(
-                    cfg.panel_channel_id
-                ) or await self.fetch_channel(cfg.panel_channel_id)
-                if isinstance(channel, (discord.TextChannel, discord.Thread)):
-                    message = await channel.fetch_message(cfg.panel_message_id)
-                    for row in message.components:
-                        for component in getattr(row, "children", ()):
-                            if getattr(component, "custom_id", None) == cfg.custom_id:
-                                component_found = True
-                                break
-                        if component_found:
-                            break
-            except Exception as exc:
-                fetch_error = f"{type(exc).__name__}: {exc}"
-
-        self.logger.info(
-            "course pass ready panel_message=%s custom_id=%s role=%s role_found=%s manage_roles=%s hierarchy_ok=%s component_found=%s fetch_error=%s",
-            cfg.panel_message_id,
-            cfg.custom_id,
-            cfg.role_id,
-            role is not None,
-            can_manage_roles,
-            hierarchy_ok,
-            component_found,
-            fetch_error or "none",
         )
 
     async def _respond_ephemeral(

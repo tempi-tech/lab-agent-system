@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import logging
 import os
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -8,25 +9,17 @@ from typing import Any, Literal, cast, overload
 
 ThreadAutoArchiveMinutes = Literal[60, 1440, 4320, 10080]
 
+logger = logging.getLogger(__name__)
+
+# Removed features whose config blocks may still exist in running configs.
+LEGACY_IGNORED_KEYS = ("coursePass", "course_pass")
+
 
 @dataclass(frozen=True)
 class InvitePhase:
     name: str
     invite_codes: set[str]
     active: bool = True
-
-
-@dataclass(frozen=True)
-class CoursePassConfig:
-    role_id: int
-    panel_message_id: int
-    custom_id: str
-    invite_codes: set[str] = field(default_factory=set)
-    panel_channel_id: int | None = None
-    button_label: str = "Course Passを受け取る"
-    open_channel_label: str = "講座チャンネルを開く"
-    open_channel_url: str | None = None
-    grant_general_role: bool = False
 
 
 @dataclass(frozen=True)
@@ -76,9 +69,10 @@ class InviteRoleServiceConfig:
     baseline_refresh_seconds: int = 300
     phases: dict[str, InvitePhase] = field(default_factory=dict)
     excluded_invite_codes: set[str] = field(default_factory=set)
-    course_pass: CoursePassConfig | None = None
     welcome: WelcomeConfig | None = None
     debug: bool = False
+    # Config keys that are no longer used (e.g. coursePass). Logged at startup.
+    ignored_legacy_keys: tuple[str, ...] = ()
 
     def phase_for_code(self, code: str | None) -> str | None:
         if not code:
@@ -90,9 +84,6 @@ class InviteRoleServiceConfig:
 
     def is_excluded_code(self, code: str | None) -> bool:
         return bool(code and code in self.excluded_invite_codes)
-
-    def should_grant_course_pass_for_invite(self, code: str | None) -> bool:
-        return bool(code and self.course_pass and code in self.course_pass.invite_codes)
 
 
 @overload
@@ -159,59 +150,14 @@ def load_config(path: str | Path) -> InviteRoleServiceConfig:
         for code in raw.get("excludedInviteCodes", raw.get("excluded_invite_codes", []))
         if str(code).strip()
     }
-    course_pass_raw = raw.get("coursePass") or raw.get("course_pass")
-    course_pass = None
-    if course_pass_raw:
-        course_pass = CoursePassConfig(
-            role_id=_int_value(
-                course_pass_raw.get("roleId", course_pass_raw.get("role_id")),
-                "coursePass.roleId",
-            ),
-            invite_codes={
-                str(code).strip()
-                for code in course_pass_raw.get(
-                    "inviteCodes", course_pass_raw.get("invite_codes", [])
-                )
-                if str(code).strip()
-            },
-            panel_channel_id=_int_value(
-                course_pass_raw.get(
-                    "panelChannelId", course_pass_raw.get("panel_channel_id")
-                ),
-                "coursePass.panelChannelId",
-                required=False,
-            ),
-            panel_message_id=_int_value(
-                course_pass_raw.get(
-                    "panelMessageId", course_pass_raw.get("panel_message_id")
-                ),
-                "coursePass.panelMessageId",
-            ),
-            custom_id=str(
-                course_pass_raw.get("customId", course_pass_raw.get("custom_id")) or ""
-            ).strip(),
-            button_label=str(
-                course_pass_raw.get("buttonLabel", "Course Passを受け取る")
-            ).strip()
-            or "Course Passを受け取る",
-            open_channel_label=str(
-                course_pass_raw.get("openChannelLabel", "講座チャンネルを開く")
-            ).strip()
-            or "講座チャンネルを開く",
-            open_channel_url=str(
-                course_pass_raw.get("openChannelUrl")
-                or course_pass_raw.get("open_channel_url")
-                or ""
-            ).strip()
-            or None,
-            grant_general_role=bool(
-                course_pass_raw.get(
-                    "grantGeneralRole", course_pass_raw.get("grant_general_role", False)
-                )
-            ),
+    ignored_legacy_keys = tuple(
+        key for key in LEGACY_IGNORED_KEYS if raw.get(key) is not None
+    )
+    for key in ignored_legacy_keys:
+        logger.warning(
+            "invite_role_service config: '%s' is no longer supported and is ignored",
+            key,
         )
-        if not course_pass.custom_id:
-            raise ValueError("coursePass.customId is required")
 
     welcome_raw = raw.get("welcome") or raw.get("labochanWelcome")
     welcome = None
@@ -340,7 +286,7 @@ def load_config(path: str | Path) -> InviteRoleServiceConfig:
         baseline_refresh_seconds=max(int(raw.get("baselineRefreshSeconds", 300)), 30),
         phases=phases,
         excluded_invite_codes=excluded_invite_codes,
-        course_pass=course_pass,
         welcome=welcome,
         debug=bool(raw.get("debug", False)),
+        ignored_legacy_keys=ignored_legacy_keys,
     )

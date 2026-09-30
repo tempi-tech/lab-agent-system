@@ -17,7 +17,6 @@ Canonical implementation:
   - does **not** assign the general role (`agi-lab`); agi-backend decides it
   - assigns the review role when invite detection fails
   - records the join and starts the welcome, regardless of role assignment
-- Re-registers the Course Pass persistent button view for the existing panel message
 - Appends a local CSV join log
 - Asks the Labochan OpenClaw agent to consider visible Discord context and send
   one welcome message in the member's onboarding thread (no role grant required)
@@ -58,11 +57,6 @@ Files to watch:
 - `data/invite_role_service/invite_baseline.json`
 - `data/invite_role_service/member_log.csv`
 
-Expected startup logs for Course Pass:
-
-- `registered course pass persistent view ...`
-- `course pass ready ... manage_roles=True hierarchy_ok=True component_found=True`
-
 ## 3. Enable via launchd
 
 ```bash
@@ -89,22 +83,14 @@ cat /Users/kmini/lab-agent-system/data/invite_role_service/heartbeat.json
 tail -n 50 /Users/kmini/lab-agent-system/data/invite_role_service/service.log
 ```
 
-## 4. Course Pass button
+## 4. Course Pass (removed)
 
-The service registers a persistent `discord.ui.View` bound to the existing panel
-message and handles the Course Pass role claim button. **It does not post or edit
-the panel message.**
-
-Config keys under `coursePass` in `operations/invite_role_service.config.json`:
-
-- `roleId` — role granted on click
-- `panelChannelId` — panel message channel id (optional; used for startup validation only)
-- `panelMessageId` — `client.add_view(view, message_id=...)` target
-- `customId` — button custom_id to match (e.g. `course_pass_role:claim:2026-04`)
-- `buttonLabel` / `openChannelLabel` / `openChannelUrl` — cosmetic / link-button
-
-Disable the feature by removing the `coursePass` block; the rest of the service
-(invite→agi-lab role grant, course invite exclusions) is untouched.
+The Course Pass button, its persistent view, and the grant on the course invite
+code were removed. Course participants now enter a passphrase from the entry
+panel, and agi-backend grants time-limited access. An old config that still has
+a `coursePass` block keeps loading; the block is ignored and a warning is
+logged (`config key 'coursePass' is no longer supported and is ignored`).
+You can delete the block from the real config at any time.
 
 ## 5. Labochan welcome
 
@@ -154,16 +140,7 @@ Config keys under `welcome`:
   defer, never a reminder
 
 Disable the feature by setting `welcome.enabled=false` or removing the
-`welcome` block. Role assignment and Course Pass stay untouched.
-
-### Per-click log line
-
-```
-course_pass outcome=granted member=<id> role=<role_id> detail=granted
-```
-
-Possible outcomes: `granted`, `already_has_role`, `wrong_guild`, `role_not_found`,
-`member_unresolved`, `missing_manage_roles`, `hierarchy_blocked`.
+`welcome` block. Join logging stays untouched.
 
 ### Restart after code or config changes
 
@@ -172,30 +149,14 @@ launchctl kickstart -k "gui/$(id -u)/com.kmini.invite-role-service"
 tail -f /Users/kmini/lab-agent-system/data/invite_role_service/service.log
 ```
 
-### MacBook Pro cutover
-
-- Button interactions route to the bot **application** that posted the panel,
-  not the process. Mac mini receives clicks only if it uses the same bot token
-  as whatever posted the panel. On boot verify `component_found=True`; then
-  confirm one real click produces `outcome=granted`.
-- As long as MBP and Mac mini share the token, only one holds the gateway
-  session at a time — Discord kicks the older one on each new `IDENTIFY`.
-  Safe cutover order:
-  1. Verify Mac mini `course pass ready ... =True` + one `outcome=granted`
-  2. Stop the MBP bot process (or disable Course Pass handling there)
-  3. Watch Mac mini heartbeat stay `status=ready` for a few minutes
-
 ## 6. Rollback
 
 Two granularities:
 
-- Disable only Labochan welcome, keep invite→role grant running:
+- Disable only Labochan welcome, keep join logging running:
   set `welcome.enabled=false`, then
   `launchctl kickstart -k "gui/$(id -u)/com.kmini.invite-role-service"`.
-- Disable only Course Pass, keep invite→role grant running:
-  remove the `coursePass` block from `operations/invite_role_service.config.json`,
-  then `launchctl kickstart -k "gui/$(id -u)/com.kmini.invite-role-service"`.
 - Disable the whole service:
   `launchctl unload ~/Library/LaunchAgents/com.kmini.invite-role-service.plist`.
 
-Either rollback leaves existing members and the panel message untouched.
+Rollback leaves existing members and roles untouched.

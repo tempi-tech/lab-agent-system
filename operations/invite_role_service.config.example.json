@@ -23,19 +23,6 @@
   "excludedInviteCodes": [
     "REPLACE_ME_EXCLUDED_INVITE_CODE"
   ],
-  "coursePass": {
-    "roleId": 0,
-    "panelChannelId": 0,
-    "panelMessageId": 0,
-    "customId": "course_pass_role:claim:example",
-    "inviteCodes": [
-      "REPLACE_ME_COURSE_INVITE_CODE"
-    ],
-    "buttonLabel": "Course Passを受け取る",
-    "openChannelLabel": "講座スレッドを開く",
-    "openChannelUrl": "https://discord.com/channels/GUILD_ID/CHANNEL_ID",
-    "grantGeneralRole": true
-  },
   "welcome": {
     "enabled": true,
     "channelId": 0,
