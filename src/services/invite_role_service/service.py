@@ -13,6 +13,18 @@ from typing import Any
 import discord
 
 from .config import InviteRoleServiceConfig
+from .entry import (
+    MESSAGE_PASSPHRASE_EMPTY,
+    MESSAGE_SUPPORT_FAILED,
+    MESSAGE_SUPPORT_SENT,
+    MESSAGE_WRONG_GUILD,
+    EntryBackendClient,
+    course_claim_message,
+    normalize_passphrase,
+    status_message,
+    support_request_message,
+)
+from .entry_panel import EntryPanelView
 from .join import plan_join_role_ids
 from .storage import CsvLogStore, JsonStateFile, MemberJoinRecord
 
@@ -38,6 +50,9 @@ class InviteRoleService(discord.Client):
             JsonStateFile(config.welcome.state_path)
             if config.welcome is not None
             else None
+        )
+        self.entry_backend = (
+            EntryBackendClient(config.entry) if config.entry is not None else None
         )
         self._invite_uses: dict[str, int] = {}
         self._guild: discord.Guild | None = None
@@ -71,6 +86,17 @@ class InviteRoleService(discord.Client):
         self._baseline_task = asyncio.create_task(
             self._baseline_refresh_loop(), name="invite-role-baseline"
         )
+        entry = self.config.entry
+        if entry is not None:
+            # Persistent view: same custom_ids after restart, so the posted
+            # panel keeps working. message_id is optional.
+            self.add_view(
+                EntryPanelView(entry, self), message_id=entry.panel_message_id
+            )
+            self.logger.info(
+                "registered entry panel persistent view message=%s",
+                entry.panel_message_id or "any",
+            )
 
     async def close(self) -> None:
         tasks = [
@@ -99,6 +125,17 @@ class InviteRoleService(discord.Client):
         for key in self.config.ignored_legacy_keys:
             self.logger.warning(
                 "config key '%s' is no longer supported and is ignored", key
+            )
+        if self.config.entry is not None:
+            entry = self.config.entry
+            self.logger.info(
+                "entry ready channel=%s panel_message=%s support_channel=%s backend=%s token_configured=%s token_env=%s",
+                entry.channel_id or "none",
+                entry.panel_message_id or "none",
+                entry.support_channel_id or "none",
+                entry.backend_base_url,
+                entry.backend_token() is not None,
+                entry.backend_token_env,
             )
         if self.config.welcome is not None and self.config.welcome.enabled:
             await self._validate_welcome_setup(guild)
@@ -229,6 +266,99 @@ class InviteRoleService(discord.Client):
                 member=member, invite_type=invite_type, role_names=role_names
             )
 
+    def _entry_interaction_allowed(self, interaction: discord.Interaction) -> bool:
+        guild = interaction.guild
+        return guild is not None and guild.id == self.config.guild_id
+
+    async def _defer_ephemeral(self, interaction: discord.Interaction) -> None:
+        if not interaction.response.is_done():
+            await interaction.response.defer(ephemeral=True, thinking=True)
+
+    async def handle_entry_course_claim(
+        self, interaction: discord.Interaction, passphrase: str
+    ) -> None:
+        """講座に参加: relay the passphrase to agi-backend. Never log the passphrase."""
+        if not self._entry_interaction_allowed(interaction):
+            await self._respond_ephemeral(interaction, MESSAGE_WRONG_GUILD)
+            return
+        passphrase = normalize_passphrase(passphrase)
+        if not passphrase:
+            await self._respond_ephemeral(interaction, MESSAGE_PASSPHRASE_EMPTY)
+            return
+        assert self.entry_backend is not None
+        await self._defer_ephemeral(interaction)
+        result = await self.entry_backend.claim_course(
+            discord_user_id=interaction.user.id, passphrase=passphrase
+        )
+        await self._respond_ephemeral(interaction, course_claim_message(result))
+        await self._log(
+            f"entry course_claim member={interaction.user.id} {result.log_label} "
+            f"already_claimed={bool(result.data.get('already_claimed'))}"
+        )
+
+    async def handle_entry_status(self, interaction: discord.Interaction) -> None:
+        """参加状態を確認: ephemeral status from agi-backend."""
+        if not self._entry_interaction_allowed(interaction):
+            await self._respond_ephemeral(interaction, MESSAGE_WRONG_GUILD)
+            return
+        assert self.entry_backend is not None
+        await self._defer_ephemeral(interaction)
+        result = await self.entry_backend.get_status(
+            discord_user_id=interaction.user.id
+        )
+        await self._respond_ephemeral(interaction, status_message(result))
+        line = f"entry status member={interaction.user.id} {result.log_label}"
+        if result.success:
+            self.logger.info(line)
+        else:
+            await self._log(line)
+
+    async def handle_entry_support(
+        self, interaction: discord.Interaction, text: str
+    ) -> None:
+        """連携できない時: forward to the ops channel. The text is not logged."""
+        if not self._entry_interaction_allowed(interaction):
+            await self._respond_ephemeral(interaction, MESSAGE_WRONG_GUILD)
+            return
+        entry = self.config.entry
+        channel_id = entry.support_channel_id if entry is not None else None
+        user = interaction.user
+        if channel_id is None:
+            await self._respond_ephemeral(interaction, MESSAGE_SUPPORT_FAILED)
+            await self._log(
+                f"entry support dropped member={user.id} reason=support_channel_not_configured"
+            )
+            return
+        await self._defer_ephemeral(interaction)
+        try:
+            channel = self.get_channel(channel_id)
+            if channel is None:
+                channel = await self.fetch_channel(channel_id)
+            if not isinstance(channel, (discord.TextChannel, discord.Thread)):
+                raise RuntimeError("support channel is not a text channel")
+            await channel.send(
+                support_request_message(
+                    user_id=user.id,
+                    user_mention=user.mention,
+                    username=str(user),
+                    text=text,
+                ),
+                allowed_mentions=discord.AllowedMentions.none(),
+            )
+        except Exception as exc:
+            self.logger.warning(
+                "entry support forward failed member=%s error=%s",
+                user.id,
+                type(exc).__name__,
+            )
+            await self._respond_ephemeral(interaction, MESSAGE_SUPPORT_FAILED)
+            await self._log(
+                f"entry support failed member={user.id} error={type(exc).__name__}"
+            )
+            return
+        await self._respond_ephemeral(interaction, MESSAGE_SUPPORT_SENT)
+        await self._log(f"entry support forwarded member={user.id} length={len(text)}")
+
     async def _heartbeat_loop(self) -> None:
         while True:
             await self._write_heartbeat(status="running")
@@ -332,7 +462,7 @@ class InviteRoleService(discord.Client):
     ) -> str:
         cfg = self.config.welcome
         assert cfg is not None
-        destination_channel_id = destination_channel_id or cfg.channel_id
+        destination_channel_id = destination_channel_id or self._welcome_channel_id()
         intro_line = (
             f"- 自己紹介チャンネル: <#{cfg.intro_channel_id}>"
             if cfg.intro_channel_id
@@ -343,6 +473,14 @@ class InviteRoleService(discord.Client):
             if cfg.guide_channel_id
             else "- 全体案内チャンネル: 未指定"
         )
+        entry_lines = ""
+        entry = self.config.entry
+        if entry is not None and entry.channel_id:
+            entry_lines = (
+                f"- 入口チャンネル: <#{entry.channel_id}>\n"
+                "- 入室しただけでは会員向けの部屋はまだ見えない。"
+                "会員の方は入口の「Discord 連携」、講座に申し込んだ方は入口の「講座に参加」で開くことを、1文で自然に添える。\n"
+            )
         return (
             "あなたはAGIラボDiscordにいるラボちゃん本人です。\n"
             "新しくAGIラボに入った人へ、本人の歓迎スレッドでメッセージを1つだけ送ります。\n\n"
@@ -371,6 +509,7 @@ class InviteRoleService(discord.Client):
             f"{guide_line}\n"
             f"{intro_line}\n"
             f"- 投稿先の歓迎スレッド: <#{destination_channel_id}>\n"
+            f"{entry_lines}"
         )
 
     def _welcome_thread_name(self, member: discord.Member) -> str:
@@ -386,16 +525,22 @@ class InviteRoleService(discord.Client):
         max_name_length = 100 - len(prefix) - len(suffix)
         return f"{prefix}{display_name[:max_name_length]}{suffix}"
 
-    async def _welcome_parent_channel(self) -> discord.TextChannel:
+    def _welcome_channel_id(self) -> int:
+        """Welcome threads go to the entry channel when it is configured."""
+        entry = self.config.entry
+        if entry is not None and entry.channel_id:
+            return entry.channel_id
         cfg = self.config.welcome
         assert cfg is not None
-        channel = self.get_channel(cfg.channel_id)
+        return cfg.channel_id
+
+    async def _welcome_parent_channel(self) -> discord.TextChannel:
+        channel_id = self._welcome_channel_id()
+        channel = self.get_channel(channel_id)
         if channel is None:
-            channel = await self.fetch_channel(cfg.channel_id)
+            channel = await self.fetch_channel(channel_id)
         if not isinstance(channel, discord.TextChannel):
-            raise RuntimeError(
-                f"welcome channel is not a text channel: {cfg.channel_id}"
-            )
+            raise RuntimeError(f"welcome channel is not a text channel: {channel_id}")
         return channel
 
     async def _create_welcome_destination(
@@ -416,10 +561,10 @@ class InviteRoleService(discord.Client):
                 member=member,
                 invite_type=invite_type,
                 role_names=role_names,
-                destination_channel_id=cfg.channel_id,
+                destination_channel_id=self._welcome_channel_id(),
                 status="destination_created",
             )
-            return cfg.channel_id
+            return self._welcome_channel_id()
 
         channel = await self._welcome_parent_channel()
         starter: discord.Message | Any | None = None
@@ -586,7 +731,7 @@ class InviteRoleService(discord.Client):
                 "username": str(member),
                 "inviteType": invite_type,
                 "roles": role_names,
-                "channelId": cfg.channel_id,
+                "channelId": self._welcome_channel_id(),
                 "status": status,
             }
         )
@@ -620,9 +765,7 @@ class InviteRoleService(discord.Client):
             "username": str(member),
             "inviteType": invite_type,
             "roles": role_names,
-            "channelId": (
-                self.config.welcome.channel_id if self.config.welcome else None
-            ),
+            "channelId": (self._welcome_channel_id() if self.config.welcome else None),
             "threadId": destination_channel_id,
         }
         state["pending"].pop(str(member.id), None)
@@ -773,7 +916,7 @@ class InviteRoleService(discord.Client):
                     destination_channel_id=destination_channel_id,
                 )
                 await self._log(
-                    f"welcome sent member={member.id} channel={cfg.channel_id} thread={destination_channel_id}"
+                    f"welcome sent member={member.id} channel={self._welcome_channel_id()} thread={destination_channel_id}"
                 )
                 return
 
@@ -1203,7 +1346,7 @@ class InviteRoleService(discord.Client):
         cwd_ok = cfg.openclaw_cwd.is_dir()
         self.logger.info(
             "welcome ready channel=%s channel_ok=%s permissions_ok=%s openclaw_ok=%s node_ok=%s cwd_ok=%s threaded=%s",
-            cfg.channel_id,
+            self._welcome_channel_id(),
             channel_ok,
             permissions_ok,
             executable_ok,

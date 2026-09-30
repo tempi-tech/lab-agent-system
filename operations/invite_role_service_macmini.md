@@ -23,6 +23,8 @@ Canonical implementation:
 - About one day later, checks the public self-introduction archive and sends one
   low-pressure follow-up in the member's onboarding thread only when no
   self-introduction is visible
+- Serves the persistent entry panel (4 buttons) in the @everyone entry channel
+  and relays requests to agi-backend (`entry` block, optional)
 - Writes heartbeat and invite-baseline JSON files
 - Periodically refreshes the invite baseline
 
@@ -37,6 +39,8 @@ cp operations/invite_role_service.config.example.json operations/invite_role_ser
 Recommended:
 
 - keep the token in the dedicated service environment via `INVITE_ROLE_DISCORD_TOKEN`
+- when the `entry` block is used, also put `DISCORD_ENTRY_API_TOKEN` (same value
+  as the agi-backend secret) in `.env.invite-role-service`
 - keep all runtime files under `data/invite_role_service/`
 
 ## 2. Run manually now
@@ -91,6 +95,55 @@ panel, and agi-backend grants time-limited access. An old config that still has
 a `coursePass` block keeps loading; the block is ignored and a warning is
 logged (`config key 'coursePass' is no longer supported and is ignored`).
 You can delete the block from the real config at any time.
+
+## 4b. Entry panel (entry channel)
+
+Optional. Without the `entry` block nothing changes. With it, the service
+re-registers a persistent view (fixed custom_ids, `timeout=None`) so the posted
+panel keeps working after restarts, and welcome threads are created in
+`entry.channelId` instead of `welcome.channelId`.
+
+Buttons (custom_ids must not change once the panel is posted):
+
+| Button | What happens |
+|---|---|
+| 「Discord 連携」 | link button to `entry.linkUrl` |
+| 「講座に参加」 (`entry_panel:course_claim`) | modal with 合言葉 → `POST /internal/discord-entry/course-claims` → ephemeral reply |
+| 「参加状態を確認」 (`entry_panel:status`) | `GET /internal/discord-entry/status/:id` → ephemeral reply |
+| 「連携できない時はこちら」 (`entry_panel:support`) | modal with free text → posted to `entry.supportChannelId` (mentions disabled) → ephemeral 「運営にお伝えしました」 |
+
+Config keys under `entry` (all optional; `0` means not set):
+
+- `channelId` — the @everyone entry channel (create it in Discord first)
+- `panelMessageId` — the posted panel message (optional; binds the view to it)
+- `linkUrl` — default `https://agi-labo.com/settings`
+- `backendBaseUrl` — default `https://api.agi-labo.com` (https only)
+- `backendTokenEnv` — env var holding the bot-only API token, default
+  `DISCORD_ENTRY_API_TOKEN`. When it is missing the buttons reply "準備中" and
+  nothing is sent to the backend.
+- `supportChannelId` — ops channel for 「連携できない時」
+- `requestTimeoutSeconds` — default `10`
+
+Logging: the passphrase, the support text, and the API token are never logged.
+Course claims log `entry course_claim member=<id> status=<code> error=<code>`.
+
+Post the panel once (HTTP only, no gateway session, so it does not disturb the
+running service):
+
+```bash
+cd /Users/kmini/lab-agent-system
+export PYTHONPATH=.
+set -a; source .env.invite-role-service; set +a
+./.venv/bin/python scripts/post_entry_panel.py --config operations/invite_role_service.config.json --dry-run
+./.venv/bin/python scripts/post_entry_panel.py --config operations/invite_role_service.config.json
+# put the printed id into entry.panelMessageId, then restart the service
+# later text/button updates: add --edit
+```
+
+Expected startup logs:
+
+- `registered entry panel persistent view message=...`
+- `entry ready channel=... support_channel=... token_configured=True ...`
 
 ## 5. Labochan welcome
 
@@ -153,6 +206,9 @@ tail -f /Users/kmini/lab-agent-system/data/invite_role_service/service.log
 
 Two granularities:
 
+- Disable only the entry panel: remove the `entry` block and restart. Welcome
+  threads go back to `welcome.channelId`. The posted panel buttons stop
+  responding until the block is restored.
 - Disable only Labochan welcome, keep join logging running:
   set `welcome.enabled=false`, then
   `launchctl kickstart -k "gui/$(id -u)/com.kmini.invite-role-service"`.

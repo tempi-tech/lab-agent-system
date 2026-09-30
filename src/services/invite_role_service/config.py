@@ -22,6 +22,29 @@ class InvitePhase:
     active: bool = True
 
 
+DEFAULT_ENTRY_LINK_URL = "https://agi-labo.com/settings"
+DEFAULT_ENTRY_BACKEND_BASE_URL = "https://api.agi-labo.com"
+DEFAULT_ENTRY_BACKEND_TOKEN_ENV = "DISCORD_ENTRY_API_TOKEN"
+
+
+@dataclass(frozen=True)
+class EntryConfig:
+    """Entry channel panel (visible to @everyone). Feature is off when absent."""
+
+    channel_id: int | None = None
+    panel_message_id: int | None = None
+    link_url: str = DEFAULT_ENTRY_LINK_URL
+    backend_base_url: str = DEFAULT_ENTRY_BACKEND_BASE_URL
+    backend_token_env: str = DEFAULT_ENTRY_BACKEND_TOKEN_ENV
+    support_channel_id: int | None = None
+    request_timeout_seconds: float = 10.0
+
+    def backend_token(self) -> str | None:
+        """Read the bot-only API token from the environment (never logged)."""
+        token = os.environ.get(self.backend_token_env, "").strip()
+        return token or None
+
+
 @dataclass(frozen=True)
 class WelcomeFollowupConfig:
     enabled: bool = False
@@ -70,6 +93,7 @@ class InviteRoleServiceConfig:
     phases: dict[str, InvitePhase] = field(default_factory=dict)
     excluded_invite_codes: set[str] = field(default_factory=set)
     welcome: WelcomeConfig | None = None
+    entry: EntryConfig | None = None
     debug: bool = False
     # Config keys that are no longer used (e.g. coursePass). Logged at startup.
     ignored_legacy_keys: tuple[str, ...] = ()
@@ -114,6 +138,48 @@ def _resolve_token(raw: dict[str, Any]) -> str:
     if not token:
         raise ValueError(f"Discord token is not configured (env: {token_env})")
     return token
+
+
+def _optional_id(raw: Any, field_name: str) -> int | None:
+    """Optional Discord id. 0 is treated as "not set" (placeholder)."""
+    value = _int_value(raw, field_name, required=False)
+    return value or None
+
+
+def _parse_entry(raw: Any) -> EntryConfig | None:
+    if not raw:
+        return None
+    if not isinstance(raw, dict):
+        raise ValueError("entry must be an object")
+    link_url = str(raw.get("linkUrl") or DEFAULT_ENTRY_LINK_URL).strip()
+    backend_base_url = (
+        str(raw.get("backendBaseUrl") or DEFAULT_ENTRY_BACKEND_BASE_URL)
+        .strip()
+        .rstrip("/")
+    )
+    for name, url in (
+        ("entry.linkUrl", link_url),
+        ("entry.backendBaseUrl", backend_base_url),
+    ):
+        if not url.startswith("https://"):
+            raise ValueError(f"{name} must start with https://")
+    return EntryConfig(
+        channel_id=_optional_id(raw.get("channelId"), "entry.channelId"),
+        panel_message_id=_optional_id(
+            raw.get("panelMessageId"), "entry.panelMessageId"
+        ),
+        link_url=link_url,
+        backend_base_url=backend_base_url,
+        backend_token_env=str(
+            raw.get("backendTokenEnv") or DEFAULT_ENTRY_BACKEND_TOKEN_ENV
+        ).strip(),
+        support_channel_id=_optional_id(
+            raw.get("supportChannelId"), "entry.supportChannelId"
+        ),
+        request_timeout_seconds=min(
+            max(float(raw.get("requestTimeoutSeconds", 10)), 1), 30
+        ),
+    )
 
 
 def load_config(path: str | Path) -> InviteRoleServiceConfig:
@@ -287,6 +353,7 @@ def load_config(path: str | Path) -> InviteRoleServiceConfig:
         phases=phases,
         excluded_invite_codes=excluded_invite_codes,
         welcome=welcome,
+        entry=_parse_entry(raw.get("entry")),
         debug=bool(raw.get("debug", False)),
         ignored_legacy_keys=ignored_legacy_keys,
     )

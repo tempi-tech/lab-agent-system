@@ -1,10 +1,10 @@
 {
   "tokenEnv": "INVITE_ROLE_DISCORD_TOKEN",
-  "guild_id": 0,
-  "log_channel_id": 0,
+  "guild_id": 100000000000000001,
+  "log_channel_id": 100000000000000002,
   "roles": {
-    "general_role_id": 0,
-    "review_role_id": 0
+    "general_role_id": 100000000000000003,
+    "review_role_id": 100000000000000004
   },
   "phases": {
     "legacy": {
@@ -23,11 +23,19 @@
   "excludedInviteCodes": [
     "REPLACE_ME_EXCLUDED_INVITE_CODE"
   ],
+  "entry": {
+    "channelId": 0,
+    "panelMessageId": 0,
+    "linkUrl": "https://agi-labo.com/settings",
+    "backendBaseUrl": "https://api.agi-labo.com",
+    "backendTokenEnv": "DISCORD_ENTRY_API_TOKEN",
+    "supportChannelId": 0
+  },
   "welcome": {
     "enabled": true,
-    "channelId": 0,
-    "guideChannelId": 0,
-    "introChannelId": 0,
+    "channelId": 100000000000000005,
+    "guideChannelId": 100000000000000006,
+    "introChannelId": 100000000000000007,
     "statePath": "/Users/kmini/lab-agent-system/data/invite_role_service/welcome_state.json",
     "agentId": "labochan-public",
     "thinking": "low",

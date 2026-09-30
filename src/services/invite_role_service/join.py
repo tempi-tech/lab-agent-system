@@ -1,7 +1,9 @@
 from __future__ import annotations
 
 
-def plan_join_role_ids(*, used_code: str | None, review_role_id: int | None) -> list[int]:
+def plan_join_role_ids(
+    *, used_code: str | None, review_role_id: int | None
+) -> list[int]:
     """Role ids to add when a member joins.
 
     The general member role (agi-lab) is never granted here. Who holds it is

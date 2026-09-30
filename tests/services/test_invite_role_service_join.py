@@ -109,9 +109,7 @@ def test_excluded_invite_is_logged_without_roles_or_welcome(tmp_path: Path) -> N
 
     member.add_roles.assert_not_awaited()
     service._send_welcome_if_enabled.assert_not_awaited()  # type: ignore[attr-defined] # noqa: SLF001
-    assert "none(excluded)" in (tmp_path / "member_log.csv").read_text(
-        encoding="utf-8"
-    )
+    assert "none(excluded)" in (tmp_path / "member_log.csv").read_text(encoding="utf-8")
 
 
 def test_general_role_id_is_optional_in_config(tmp_path: Path, monkeypatch) -> None:

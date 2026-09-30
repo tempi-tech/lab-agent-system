@@ -108,8 +108,7 @@ def test_legacy_course_pass_block_is_ignored_with_warning(
   "coursePass": {"roleId": 5, "panelMessageId": 7, "customId": ""},
   "dataDir": "%s"
 }
-"""
-        % str(tmp_path / "runtime"),
+""" % str(tmp_path / "runtime"),
         encoding="utf-8",
     )
 
