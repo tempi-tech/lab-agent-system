@@ -63,7 +63,8 @@ class WelcomeConfig:
 class InviteRoleServiceConfig:
     discord_token: str
     guild_id: int
-    general_role_id: int
+    # Kept for reference/logging only; the general role is no longer granted on join.
+    general_role_id: int | None
     review_role_id: int | None
     log_channel_id: int | None
     data_dir: Path
@@ -316,7 +317,9 @@ def load_config(path: str | Path) -> InviteRoleServiceConfig:
         discord_token=_resolve_token(raw),
         guild_id=_int_value(raw.get("guild_id"), "guild_id"),
         general_role_id=_int_value(
-            roles.get("general_role_id", raw.get("general_role_id")), "general_role_id"
+            roles.get("general_role_id", raw.get("general_role_id")),
+            "general_role_id",
+            required=False,
         ),
         review_role_id=_int_value(
             roles.get("review_role_id", raw.get("review_role_id")),

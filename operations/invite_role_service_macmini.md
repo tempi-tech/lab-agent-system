@@ -1,6 +1,8 @@
 # Invite Role Service on Mac mini
 
-This is the smallest standalone recovery path for role assignment.
+Standalone Discord entry service: join logging, welcome, and the entry panel.
+It does not decide who holds the general member role (`agi-lab`); agi-backend
+does (membership or a time-limited grant).
 
 Canonical implementation:
 
@@ -12,12 +14,13 @@ Canonical implementation:
 - Connects to one Discord guild
 - Snapshots invite uses on startup
 - On member join:
-  - always assigns the general role
+  - does **not** assign the general role (`agi-lab`); agi-backend decides it
   - assigns the review role when invite detection fails
+  - records the join and starts the welcome, regardless of role assignment
 - Re-registers the Course Pass persistent button view for the existing panel message
 - Appends a local CSV join log
 - Asks the Labochan OpenClaw agent to consider visible Discord context and send
-  one welcome message in the Labochan room after a successful general-role grant
+  one welcome message in the member's onboarding thread (no role grant required)
 - About one day later, checks the public self-introduction archive and sends one
   low-pressure follow-up in the member's onboarding thread only when no
   self-introduction is visible

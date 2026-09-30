@@ -14,6 +14,7 @@ import discord
 
 from .config import CoursePassConfig, InviteRoleServiceConfig
 from .course_pass import evaluate_course_pass_claim
+from .join import plan_join_role_ids
 from .storage import CsvLogStore, JsonStateFile, MemberJoinRecord
 
 
@@ -207,37 +208,13 @@ class InviteRoleService(discord.Client):
                 )
                 return
 
-            general_role = member.guild.get_role(self.config.general_role_id)
-            if general_role is None:
-                self.logger.error(
-                    "general role missing: %s", self.config.general_role_id
-                )
-                await self._log(f"general role missing: {self.config.general_role_id}")
-                return
-
-            review_role = None
-            if self.config.review_role_id is not None:
-                review_role = member.guild.get_role(self.config.review_role_id)
-
-            roles_to_add: list[discord.Role] = [general_role]
             phase = self.config.phase_for_code(used_code)
-            if self.config.should_grant_course_pass_for_invite(used_code):
-                assert self.config.course_pass is not None
-                course_role = member.guild.get_role(self.config.course_pass.role_id)
-                if course_role is None:
-                    await self._log(
-                        f"course pass role missing: {self.config.course_pass.role_id}"
-                    )
-                else:
-                    roles_to_add.append(course_role)
             if phase:
                 invite_type = f"invited:{phase}"
             elif used_code:
                 invite_type = "general"
             else:
                 invite_type = "unknown"
-                if review_role is not None:
-                    roles_to_add.append(review_role)
 
             detection_method = "uses_diff"
             if "vanished=" in debug_detail and used_code:
@@ -245,18 +222,32 @@ class InviteRoleService(discord.Client):
             elif used_code is None:
                 detection_method = "detection_failed"
 
-            try:
-                await member.add_roles(
-                    *roles_to_add, reason=f"invite-role-service: {invite_type}"
-                )
-            except Exception as exc:
-                self.logger.exception("failed assigning roles to %s", member.id)
-                await self._log(
-                    f"role assignment failed member={member.id} error={type(exc).__name__}: {exc}"
-                )
-                return
+            # The general role (agi-lab) is no longer granted on join; agi-backend
+            # decides it. Only the review role is added when detection failed.
+            roles_to_add: list[discord.Role] = []
+            for role_id in plan_join_role_ids(
+                used_code=used_code, review_role_id=self.config.review_role_id
+            ):
+                role = member.guild.get_role(role_id)
+                if role is None:
+                    await self._log(f"join role missing: {role_id}")
+                    continue
+                roles_to_add.append(role)
 
-            role_names = ", ".join(role.name for role in roles_to_add)
+            assigned_roles: list[discord.Role] = []
+            if roles_to_add:
+                try:
+                    await member.add_roles(
+                        *roles_to_add, reason=f"invite-role-service: {invite_type}"
+                    )
+                    assigned_roles = roles_to_add
+                except Exception as exc:
+                    self.logger.exception("failed assigning roles to %s", member.id)
+                    await self._log(
+                        f"role assignment failed member={member.id} error={type(exc).__name__}: {exc}"
+                    )
+
+            role_names = ", ".join(role.name for role in assigned_roles) or "none"
             self.member_log.append(
                 MemberJoinRecord.create(
                     discord_id=member.id,
