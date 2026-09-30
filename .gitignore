@@ -30,3 +30,7 @@ docs/
 CONTINUITY.md
 logs_*.txt
 .claude/
+
+# invite_role_service: real config and env stay local
+operations/invite_role_service.config.json
+.env.invite-role-service

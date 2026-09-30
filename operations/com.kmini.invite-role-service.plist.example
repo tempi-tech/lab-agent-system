@@ -1,0 +1,30 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+  <key>Label</key>
+  <string>com.kmini.invite-role-service</string>
+
+  <key>ProgramArguments</key>
+  <array>
+    <string>/bin/zsh</string>
+    <string>/Users/kmini/lab-agent-system/scripts/start_invite_role_service.sh</string>
+  </array>
+
+  <key>WorkingDirectory</key>
+  <string>/Users/kmini/lab-agent-system</string>
+
+  <key>RunAtLoad</key>
+  <true/>
+  <key>KeepAlive</key>
+  <true/>
+
+  <key>ThrottleInterval</key>
+  <integer>10</integer>
+
+  <key>StandardOutPath</key>
+  <string>/Users/kmini/lab-agent-system/data/invite_role_service/launchd.stdout.log</string>
+  <key>StandardErrorPath</key>
+  <string>/Users/kmini/lab-agent-system/data/invite_role_service/launchd.stderr.log</string>
+</dict>
+</plist>

@@ -1,0 +1,67 @@
+{
+  "tokenEnv": "INVITE_ROLE_DISCORD_TOKEN",
+  "guild_id": 100000000000000001,
+  "log_channel_id": 100000000000000002,
+  "roles": {
+    "general_role_id": 100000000000000003,
+    "review_role_id": 100000000000000004
+  },
+  "phases": {
+    "legacy": {
+      "invite_codes": [
+        "REPLACE_ME_INVITE_CODE"
+      ],
+      "active": true
+    },
+    "course-example": {
+      "invite_codes": [
+        "REPLACE_ME_COURSE_INVITE_CODE"
+      ],
+      "active": true
+    }
+  },
+  "excludedInviteCodes": [
+    "REPLACE_ME_EXCLUDED_INVITE_CODE"
+  ],
+  "entry": {
+    "channelId": 0,
+    "panelMessageId": 0,
+    "linkUrl": "https://agi-labo.com/settings",
+    "backendBaseUrl": "https://api.agi-labo.com",
+    "backendTokenEnv": "DISCORD_ENTRY_API_TOKEN",
+    "supportChannelId": 0
+  },
+  "welcome": {
+    "enabled": true,
+    "channelId": 100000000000000005,
+    "guideChannelId": 100000000000000006,
+    "introChannelId": 100000000000000007,
+    "statePath": "/Users/kmini/lab-agent-system/data/invite_role_service/welcome_state.json",
+    "agentId": "labochan-public",
+    "thinking": "low",
+    "openclawBin": "/opt/homebrew/bin/openclaw",
+    "openclawCwd": "/Users/kmini/.openclaw",
+    "nodeBinDir": "/Users/kmini/.hermes/node/bin",
+    "timeoutSeconds": 240,
+    "maxAttempts": 2,
+    "retryDelaySeconds": 2,
+    "followup": {
+      "enabled": true,
+      "delaySeconds": 86400,
+      "checkIntervalSeconds": 900,
+      "discrawlDbPath": "/Users/kmini/.discrawl/discrawl.db",
+      "archiveMaxAgeSeconds": 1800
+    },
+    "skipBots": true,
+    "threaded": true,
+    "threadAutoArchiveMinutes": 10080
+  },
+  "dataDir": "/Users/kmini/lab-agent-system/data/invite_role_service",
+  "memberLogPath": "/Users/kmini/lab-agent-system/data/invite_role_service/member_log.csv",
+  "heartbeatPath": "/Users/kmini/lab-agent-system/data/invite_role_service/heartbeat.json",
+  "serviceLogPath": "/Users/kmini/lab-agent-system/data/invite_role_service/service.log",
+  "baselinePath": "/Users/kmini/lab-agent-system/data/invite_role_service/invite_baseline.json",
+  "heartbeatIntervalSeconds": 30,
+  "baselineRefreshSeconds": 300,
+  "debug": true
+}
